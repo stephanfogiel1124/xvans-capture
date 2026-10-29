@@ -2,105 +2,168 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="SOP Capture">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<title>SOP Capture</title>
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SOP Notes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<title>SOP Notes</title>
 <!--
-  X Vans SOP Capture (2026-10-29). Stephan's phone page for recording SOPs.
-  Per picture: live camera (or a saved photo), red pen, transcript of what he says.
-  Mic modes: "phone" = Safari speech recognition, hands-free, page mute button;
-             "keyboard" = transcript box stays focused so Wispr Flow / iOS dictation keeps typing.
+  X Vans SOP Notes v2 (2026-10-29). Stephan's one-screen note taker for SOPs, notes for AI only.
+  Opens on the camera. Mic button starts muted; tap = listen (Safari speech recognition) until tapped again.
+  Shoot -> scribble red -> Next. Pictures are numbered 1..n; what he says goes to the picture he's on.
+  Pictures wait on the phone (IndexedDB) while he shoots; they upload when he mutes the mic, opens the
+  notepad, taps Done, or leaves the app. Never in the background while shooting.
+  No name or category: he says them, SOP Master pulls them from the transcript at sync.
+  Top left = notepad (his SOPs, pictures + text, edit). Done = Status NEW, hands off to SOP Master.
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
 <style>
-:root{--bg:#111;--card:#1d1d1d;--line:#333;--text:#f4f4f4;--muted:#a8a8a8;--accent:#ffc629;--danger:#e5484d;--ok:#3dd68c;--red:#ff2a2a}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;background:var(--bg);color:var(--text);font:18px/1.45 -apple-system,system-ui,Roboto,sans-serif;-webkit-text-size-adjust:100%}
-header{position:sticky;top:0;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 16px 10px;border-bottom:1px solid var(--line);z-index:2}
-h1{font-size:22px;margin:0;line-height:1.25}
-main{padding:14px 16px 140px}
-input[type=text],textarea,select{width:100%;font:inherit;font-size:18px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text)}
-label.f{display:block;color:var(--muted);font-size:14px;margin:14px 0 6px}
-button{font-family:inherit;cursor:pointer}
-.btn{display:block;width:100%;font-size:19px;font-weight:700;padding:16px;border-radius:14px;border:0;background:var(--accent);color:#000;margin:10px 0}
-.btn.alt{background:var(--card);color:var(--text);border:1px solid var(--line)}
-.btn.go{background:var(--ok)}
-.btn:disabled{opacity:.4}
-.cat{color:var(--muted);text-transform:uppercase;font-size:13px;letter-spacing:.08em;margin:22px 0 8px}
-.card{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:0 0 10px;color:var(--text);font-size:18px;font-weight:600}
-.card small{display:block;color:var(--muted);font-weight:400;font-size:14px;margin-top:3px}
-.seg{display:flex;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:4px}
-.seg button{flex:1;border:0;border-radius:9px;padding:10px 6px;background:none;color:var(--text);font-size:15px;font-weight:600}
-.seg button.on{background:var(--accent);color:#000}
-.hint{color:var(--muted);font-size:14px;margin:6px 0 0}
-.msg{color:var(--muted);text-align:center;margin-top:40px}
-.err{background:var(--danger);color:#fff;border-radius:12px;padding:10px 14px;margin:10px 0;font-size:15px}
-/* picture list */
-.item{display:flex;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;margin:0 0 10px}
-.item .th{flex:0 0 92px;height:92px;border-radius:10px;background:#000 center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
-.item .tx{flex:1;min-width:0}
-.item .tx b{display:block;font-size:15px}
-.item .tx p{margin:2px 0 6px;font-size:15px;color:#ddd;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.item .row{display:flex;gap:6px}
-.item .row button{border:1px solid var(--line);background:#262626;color:var(--text);border-radius:9px;padding:6px 10px;font-size:14px}
-.item .row button.del{color:var(--danger)}
-.foot{position:fixed;left:0;right:0;bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line);display:flex;gap:10px}
-.foot .btn{margin:0}
-/* picture screen */
-#cmp{position:fixed;left:0;top:0;width:100%;display:flex;flex-direction:column;background:#000;z-index:5}
-.top{display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px;background:var(--bg)}
-.top b{flex:1;text-align:center;font-size:17px}
-.top button{border:0;border-radius:10px;padding:10px 14px;font-size:17px;font-weight:700}
-.top .x{background:var(--card);color:var(--text)}
-.top .okb{background:var(--ok);color:#000;min-width:76px}
-.stage{position:relative;flex:1 1 auto;min-height:150px;background:#000;overflow:hidden}
-.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
-.stage canvas{touch-action:none}
-.stage .note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);padding:20px;font-size:16px}
-.tools{display:flex;gap:8px;align-items:center;padding:8px 10px;background:var(--bg)}
-.tools button{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;padding:9px 12px;font-size:15px;font-weight:600}
-.tools .shut{flex:0 0 64px;height:64px;border-radius:50%;background:#fff;border:5px solid #888;padding:0;margin:0 auto}
-.tools .sp{flex:1}
-.mic{display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--bg);font-size:14px;color:var(--muted)}
-.mic .dot{width:12px;height:12px;border-radius:50%;background:#555;flex:none}
-.mic.on .dot{background:var(--red);animation:pulse 1.2s infinite}
-@keyframes pulse{50%{opacity:.3}}
-.mic .st{flex:1}
-.mic button{border:0;border-radius:10px;padding:9px 14px;font-size:15px;font-weight:700;background:var(--accent);color:#000}
-.mic.muted button{background:var(--danger);color:#fff}
-.txt{padding:0 10px 10px;background:var(--bg)}
-.txt textarea{height:96px;font-size:16px;resize:none}
-.interim{color:var(--muted);font-size:14px;min-height:1.2em;padding:2px 2px 0;font-style:italic}
-.kinds{padding:0 10px 8px;background:var(--bg)}
-.kinds .seg button{font-size:13px;padding:8px 4px}
-.busy{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9;display:none;align-items:center;justify-content:center;font-size:20px;font-weight:700;text-align:center;padding:20px}
+:root{--line:rgba(255,255,255,.14);--glass:rgba(22,22,24,.62);--muted:rgba(255,255,255,.55);--red:#ff3b30}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+html,body{margin:0;height:100%;background:#000;color:#fff;font:16px/1.4 -apple-system,"SF Pro Display",system-ui,sans-serif;overflow:hidden;-webkit-text-size-adjust:100%}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;padding:0}
+svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.glass{background:var(--glass);border:1px solid var(--line);-webkit-backdrop-filter:blur(20px) saturate(1.4);backdrop-filter:blur(20px) saturate(1.4)}
+.pill{border-radius:999px;padding:12px 22px;font-weight:600;letter-spacing:.01em}
+.pill.white{background:#fff;color:#000;border-color:#fff}
+.round{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+
+/* ---------- camera / scribble ---------- */
+#cam{position:fixed;inset:0}
+#stage{position:absolute;inset:0;background:#000}
+#stage video,#stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+#stage canvas{touch-action:none;display:none}
+.topbar{position:absolute;left:0;right:0;top:0;padding:calc(10px + env(safe-area-inset-top)) 14px 0;display:flex;align-items:center;gap:10px;z-index:3}
+.topbar .mid{flex:1;text-align:center;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.topbar .mid b{color:#fff;font-weight:600}
+.count{font-variant-numeric:tabular-nums}
+#transcript{position:absolute;left:14px;right:14px;bottom:calc(128px + env(safe-area-inset-bottom));z-index:3;border-radius:18px;padding:10px 14px;font-size:15px;line-height:1.35;max-height:5.6em;overflow:hidden;display:none}
+#transcript .n{color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase;display:block;margin-bottom:2px}
+#transcript i{color:var(--muted);font-style:normal}
+.bottombar{position:absolute;left:0;right:0;bottom:0;padding:0 26px calc(22px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:space-between;z-index:3}
+.shutter{width:78px;height:78px;border-radius:50%;border:3px solid #fff;display:flex;align-items:center;justify-content:center}
+.shutter i{display:block;width:62px;height:62px;border-radius:50%;background:#fff;transition:transform .1s}
+.shutter:active i{transform:scale(.88)}
+.mic{position:relative}
+.mic.live{background:var(--red);border-color:var(--red);box-shadow:0 0 0 0 rgba(255,59,48,.6);animation:ring 1.6s infinite}
+@keyframes ring{70%{box-shadow:0 0 0 16px rgba(255,59,48,0)}100%{box-shadow:0 0 0 0 rgba(255,59,48,0)}}
+.mic .slash{display:block}
+.mic.live .slash{display:none}
+.hint{position:absolute;left:0;right:0;top:46%;text-align:center;color:var(--muted);font-size:15px;padding:0 30px;z-index:2}
+.toast{position:absolute;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%);z-index:5;border-radius:999px;padding:8px 16px;font-size:14px;white-space:nowrap;display:none}
+.toast.err{background:var(--red);border-color:var(--red)}
+
+/* ---------- notepad ---------- */
+#pad{position:fixed;inset:0;background:#000;overflow-y:auto;-webkit-overflow-scrolling:touch;display:none;z-index:6}
+#pad *{-webkit-user-select:text;user-select:text}
+.padhead{position:sticky;top:0;z-index:2;padding:calc(10px + env(safe-area-inset-top)) 14px 12px;display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.72);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-bottom:1px solid var(--line)}
+.padhead h1{flex:1;margin:0;font-size:17px;font-weight:600;letter-spacing:.02em;text-align:center}
+.padbody{padding:16px 14px calc(40px + env(safe-area-inset-bottom))}
+.sec{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:22px 4px 10px}
+.sop{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border-radius:20px;padding:14px 16px;margin:0 0 10px;background:#111;border:1px solid var(--line)}
+.sop .t{flex:1;min-width:0}
+.sop .t b{display:block;font-weight:600}
+.sop .t small{color:var(--muted);font-size:13px}
+.tag{font-size:11px;letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--line);border-radius:999px;padding:4px 10px;color:var(--muted)}
+.tag.rec{color:#fff;border-color:var(--red);background:rgba(255,59,48,.18)}
+.pic{background:#111;border:1px solid var(--line);border-radius:20px;overflow:hidden;margin:0 0 12px}
+.pic .img{position:relative;aspect-ratio:4/3;background:#0a0a0a center/contain no-repeat;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+.pic .num{position:absolute;left:10px;top:10px;min-width:30px;height:30px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;padding:0 9px}
+.pic .row{display:flex;gap:8px;padding:10px}
+.pic textarea{flex:1;min-height:76px;background:transparent;border:0;color:#fff;font:inherit;font-size:15px;resize:vertical;outline:none;padding:4px 2px}
+.pic .del{color:var(--muted);align-self:flex-start;padding:6px}
+.pic .del.sure{color:var(--red)}
+.padbtn{display:block;width:100%;text-align:center;margin:16px 0 0}
+.empty{color:var(--muted);text-align:center;margin:60px 20px}
+.busy{position:fixed;inset:0;z-index:9;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;font-weight:600}
 </style>
 </head>
 <body>
-<div id="app"><p class="msg">Loading…</p></div>
+
+<div id="cam">
+  <div id="stage">
+    <video id="vid" playsinline muted autoplay></video>
+    <canvas id="cv"></canvas>
+  </div>
+  <div class="hint" id="hint"></div>
+
+  <div class="topbar">
+    <button class="round glass" onclick="openPad()" aria-label="SOP notepad">
+      <svg viewBox="0 0 24 24"><path d="M7 4h10a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>
+    </button>
+    <div class="mid" id="mid"></div>
+    <button class="pill glass" id="doneB" onclick="done()" style="visibility:hidden">Done</button>
+  </div>
+
+  <div id="transcript" class="glass"></div>
+  <div class="toast glass" id="toast"></div>
+
+  <!-- camera mode -->
+  <div class="bottombar" id="shootBar">
+    <button class="round glass" onclick="pickPhoto()" aria-label="Camera roll">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 16l-5-5-8.5 8.5"/></svg>
+    </button>
+    <button class="shutter" onclick="shoot()" aria-label="Take picture"><i></i></button>
+    <button class="round glass mic" onclick="toggleMic()" aria-label="Microphone">
+      <svg viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/><path class="slash" d="M4 4l16 16"/></svg>
+    </button>
+  </div>
+
+  <!-- scribble mode -->
+  <div class="bottombar" id="drawBar" style="display:none">
+    <div style="display:flex;gap:10px">
+      <button class="round glass" onclick="retake()" aria-label="Retake">
+        <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/></svg>
+      </button>
+      <button class="round glass" onclick="undo()" aria-label="Undo mark">
+        <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
+      </button>
+    </div>
+    <button class="pill white" style="padding:16px 34px;font-size:17px" onclick="next()">Next&nbsp;&nbsp;→</button>
+    <button class="round glass mic" onclick="toggleMic()" aria-label="Microphone">
+      <svg viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/><path class="slash" d="M4 4l16 16"/></svg>
+    </button>
+  </div>
+</div>
+
+<div id="pad"></div>
 <div class="busy" id="busy"></div>
-<input type="file" id="pickOne" accept="image/*" style="display:none">
-<input type="file" id="pickMany" accept="image/*" multiple style="display:none">
+<input type="file" id="pick" accept="image/*" style="display:none">
+
 <script>
 var API = 'https://script.google.com/macros/s/AKfycbzx-xtTjzXE5mAeYwAYDLOIwW3QskPkgpMX5gTYdbfWQ8K87nN_GLMnrhtfyGvdnWGJ/exec';
 var MAX_SIDE = 2000;     // photo long side saved to Drive
-var KINDS = [['step', 'Step'], ['tools', 'Tools & parts'], ['overview', 'Overview']];
-var CATS = ['Electrical', 'Plumbing', 'Cabinets', 'Install', 'Shop', 'Other'];
+var PEN = 0.008;         // pen width, fraction of the photo's long side
 
-var app = document.getElementById('app');
 var KEY = new URLSearchParams(location.search).get('k') || localStorage.getItem('capKey') || '';
 if (KEY) localStorage.setItem('capKey', KEY);
-var micMode = localStorage.getItem('micMode') || 'phone';
-var cap = null;          // current capture (from server)
-var thumbs = {};         // photoId -> data URI
 
+// Current SOP: folder in SOP Inbox (created on the first save) and how many pictures it has.
+var cur = JSON.parse(localStorage.getItem('curSop') || 'null');   // {folderId, n, started}
+var sent = JSON.parse(localStorage.getItem('sentSops') || '[]');  // [{folderId, title, n, date}]
+var held = [];                   // pictures taken but not uploaded yet: [{id, f}]
+var queue = Promise.resolve();   // uploads run one after another
+var saving = 0;
+var shot = null;                 // {base canvas, strokes} while scribbling
+var heard = '';                  // what was said for the picture we're on
+var thumbs = {};
+
+function $(id) { return document.getElementById(id); }
 function esc(s) {
   return String(s || '').replace(/[&<>"']/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
   });
+}
+function stamp() {
+  var d = new Date(), p = function (x) { return ('0' + x).slice(-2); };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+function saveState() {
+  localStorage.setItem('curSop', JSON.stringify(cur));
+  localStorage.setItem('sentSops', JSON.stringify(sent));
 }
 
 /** Calls a capture function in the SOP Master App. */
@@ -111,254 +174,34 @@ function call(fn) {
     .then(function (r) { if (!r.ok) throw new Error(r.error); return r.data; });
 }
 
-function busy(text) {
-  var b = document.getElementById('busy');
-  b.textContent = text || '';
-  b.style.display = text ? 'flex' : 'none';
+var toastT;
+function toast(t, err) {
+  var el = $('toast');
+  el.textContent = t;
+  el.className = 'toast glass' + (err ? ' err' : '');
+  el.style.display = 'block';
+  clearTimeout(toastT);
+  toastT = setTimeout(function () { el.style.display = 'none'; }, err ? 6000 : 1600);
 }
+function busy(t) { $('busy').textContent = t || ''; $('busy').style.display = t ? 'flex' : 'none'; }
 
-function fail(e) {
-  busy('');
-  alertBox(e && e.message || String(e));
-}
+// ---------- Camera ----------
 
-function alertBox(text) {
-  var d = document.createElement('div');
-  d.className = 'err';
-  d.textContent = text;
-  var m = document.querySelector('main') || app;
-  m.insertBefore(d, m.firstChild);
-  window.scrollTo(0, 0);
-}
-
-// ---------- Home: mic setting, new capture, unfinished captures ----------
-
-function home() {
-  cap = null;
-  if (!KEY) {
-    app.innerHTML = '<main><p class="msg">Open this page with your private capture link.</p></main>';
-    return;
-  }
-  app.innerHTML = '<header><h1>SOP Capture</h1></header><main>' +
-    '<label class="f">Microphone</label><div class="seg" id="micSeg">' +
-    '<button data-m="phone">Phone mic (hands-free)</button><button data-m="keyboard">Keyboard (Wispr Flow)</button></div>' +
-    '<p class="hint" id="micHint"></p>' +
-    '<div class="cat">New SOP</div>' +
-    '<input type="text" id="title" placeholder="Task name (e.g. Install roof fan)">' +
-    '<label class="f">Category</label><select id="cat">' +
-    CATS.map(function (c) { return '<option>' + c + '</option>'; }).join('') + '</select>' +
-    '<button class="btn" onclick="newCapture()">Start</button>' +
-    '<div class="cat">Not sent yet</div><div id="open"><p class="hint">Loading…</p></div></main>';
-  Array.prototype.forEach.call(document.querySelectorAll('#micSeg button'), function (b) {
-    b.onclick = function () { micMode = b.getAttribute('data-m'); localStorage.setItem('micMode', micMode); paintMic(); };
-  });
-  paintMic();
-  call('listCaptures').then(function (list) {
-    document.getElementById('open').innerHTML = list.length ? list.map(function (c) {
-      return '<button class="card" onclick="openCapture(\'' + esc(c.folderId) + '\')">' + esc(c.title) +
-        '<small>' + esc(c.category) + ' · ' + c.n + ' pictures · ' + esc(c.updated) + '</small></button>';
-    }).join('') : '<p class="hint">None.</p>';
-  }).catch(function (e) { document.getElementById('open').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; });
-}
-
-function paintMic() {
-  Array.prototype.forEach.call(document.querySelectorAll('#micSeg button'), function (b) {
-    b.className = b.getAttribute('data-m') === micMode ? 'on' : '';
-  });
-  document.getElementById('micHint').textContent = micMode === 'phone'
-    ? 'Listens the whole time a picture screen is open (AirPods too, if connected). Mute button on screen.' +
-      (SR ? '' : ' This browser has no speech recognition: use Keyboard mode.')
-    : 'The keyboard stays up under the camera so Wispr Flow (or the keyboard mic) keeps typing while you shoot and draw.';
-}
-
-function newCapture() {
-  var t = document.getElementById('title').value.trim();
-  if (!t) return alertBox('Give the task a name.');
-  busy('Starting…');
-  call('startCapture', t, document.getElementById('cat').value).then(function (c) {
-    busy(''); cap = c; list();
-  }).catch(fail);
-}
-
-function openCapture(id) {
-  busy('Loading…');
-  call('getCapture', id).then(function (c) { busy(''); cap = c; list(); }).catch(fail);
-}
-
-// ---------- Picture list for one capture ----------
-
-function list() {
-  stopAll();
-  var kindName = {}; KINDS.forEach(function (k) { kindName[k[0]] = k[1]; });
-  var h = '<header><button class="card" style="width:auto;display:inline-block;padding:6px 12px;font-size:15px;margin:0 0 8px" onclick="home()">‹ Home</button>' +
-    '<h1>' + esc(cap.title) + '</h1><p class="hint" style="margin:2px 0 0">' + esc(cap.category) + ' · ' + cap.steps.length + ' pictures</p></header><main>';
-  cap.steps.forEach(function (s, i) {
-    var th = s.photoId ? (thumbs[s.photoId] ? 'style="background-image:url(' + thumbs[s.photoId] + ')"' : 'data-th="' + i + '"') : '';
-    h += '<div class="item"><div class="th" ' + th + ' onclick="edit(' + i + ')">' + (s.photoId ? (thumbs[s.photoId] ? '' : '…') : 'no photo') + '</div>' +
-      '<div class="tx"><b>' + (i + 1) + '. ' + esc(kindName[s.kind] || 'Step') + '</b><p onclick="edit(' + i + ')">' + (esc(s.caption) || '<i style="color:#888">nothing said yet</i>') + '</p>' +
-      '<div class="row"><button onclick="edit(' + i + ')">Edit</button>' +
-      (i > 0 ? '<button onclick="move(' + i + ',-1)">↑</button>' : '') +
-      (i < cap.steps.length - 1 ? '<button onclick="move(' + i + ',1)">↓</button>' : '') +
-      '<button class="del" onclick="del(' + i + ', this)">Delete</button></div></div></div>';
-  });
-  if (!cap.steps.length) h += '<p class="hint">Tap New picture. Talk the whole time: what it is, tools, parts and how many, what to watch out for.</p>';
-  h += '<button class="btn alt" onclick="document.getElementById(\'pickMany\').click()">Upload photos I already took</button>' +
-    '<div class="cat">Done?</div><label class="f">Anything else (which vans, wheelbase, side)? Optional</label>' +
-    '<textarea id="notes" rows="2">' + esc(cap.notes) + '</textarea>' +
-    '<button class="btn go" onclick="finish()"' + (cap.steps.length ? '' : ' disabled') + '>Send to SOP Master</button></main>' +
-    '<div class="foot"><button class="btn" onclick="edit(-1)">＋ New picture</button></div>';
-  app.innerHTML = h;
-  Array.prototype.forEach.call(document.querySelectorAll('[data-th]'), function (el) {
-    var i = Number(el.getAttribute('data-th')), s = cap.steps[i];
-    call('getStepPhoto', cap.folderId, i, 'thumb').then(function (uri) {
-      if (!uri) { el.textContent = '?'; return; }
-      thumbs[s.photoId] = uri;
-      el.style.backgroundImage = 'url(' + uri + ')';
-      el.textContent = '';
-    }).catch(function () { el.textContent = '?'; });
-  });
-}
-
-function move(i, d) {
-  busy('Moving…');
-  call('moveStep', cap.folderId, i, d).then(function (c) { busy(''); cap = c; list(); }).catch(fail);
-}
-
-function del(i, b) {
-  if (b.textContent !== 'Sure?') { b.textContent = 'Sure?'; return; }   // no confirm() popups
-  busy('Deleting…');
-  call('deleteStep', cap.folderId, i).then(function (c) { busy(''); cap = c; list(); }).catch(fail);
-}
-
-function finish() {
-  busy('Sending…');
-  call('finishCapture', cap.folderId, document.getElementById('notes').value).then(function () {
-    busy('');
-    app.innerHTML = '<main><p class="msg" style="font-size:56px;color:var(--ok);margin-bottom:0">✓</p>' +
-      '<p class="msg" style="color:var(--text);font-size:22px;font-weight:700;margin-top:0">Sent: ' + esc(cap.title) + '</p>' +
-      '<p class="msg">Tell SOP Master: <b>sync</b></p><button class="btn" onclick="home()">Home</button></main>';
-  }).catch(fail);
-}
-
-/** Uploads several saved photos, one picture each (no transcript yet: edit each to talk over it). */
-document.getElementById('pickMany').onchange = function () {
-  var files = Array.prototype.slice.call(this.files);
-  this.value = '';
-  var n = 0;
-  (function next() {
-    if (n >= files.length) { busy(''); return list(); }
-    busy('Uploading ' + (n + 1) + ' of ' + files.length + '…');
-    loadFile(files[n++]).then(function (c) {
-      return call('addStep', cap.folderId, { kind: 'step', caption: '', photo: c.toDataURL('image/jpeg', 0.85) });
-    }).then(function (c) { cap = c; next(); }).catch(fail);
-  })();
-};
-
-// ---------- Picture screen: camera, red pen, mic, transcript ----------
-
-var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-var ed = null;           // the picture being edited
-var stream = null, rec = null, muted = false, micErr = '';
-
-/** i = -1 for a new picture. */
-function edit(i) {
-  var s = i >= 0 ? cap.steps[i] : null;
-  ed = {
-    i: i, kind: s ? s.kind : (cap.steps.length ? 'step' : 'tools'),
-    base: null,          // canvas with the unmarked photo
-    strokes: [], cur: null, photoDirty: false, hadPhoto: !!(s && s.photoId)
-  };
-  muted = false;
-  app.innerHTML = '<div id="cmp">' +
-    '<div class="top"><button class="x" onclick="cancelEdit()">Cancel</button><b>' + (i >= 0 ? 'Picture ' + (i + 1) : 'New picture ' + (cap.steps.length + 1)) + '</b>' +
-    '<button class="okb" onclick="saveEdit()">OK</button></div>' +
-    '<div class="stage" id="stage"><video id="vid" playsinline muted autoplay></video><canvas id="cv" style="display:none"></canvas><div class="note" id="note"></div></div>' +
-    '<div class="tools" id="tools"></div>' +
-    '<div class="mic" id="mic"><span class="dot"></span><span class="st" id="micSt"></span><button id="muteB">Mute</button></div>' +
-    '<div class="txt"><div class="interim" id="interim"></div><textarea id="tx" placeholder="' +
-    (micMode === 'keyboard' ? 'Tap here, start Wispr Flow, then just talk' : 'What you say shows up here. You can type too.') + '"></textarea></div>' +
-    '<div class="kinds"><div class="seg" id="kinds">' + KINDS.map(function (k) { return '<button data-k="' + k[0] + '">' + k[1] + '</button>'; }).join('') + '</div></div>' +
-    '</div>';
-  document.getElementById('tx').value = s ? s.caption : '';
-  Array.prototype.forEach.call(document.querySelectorAll('#kinds button'), function (b) {
-    keep(b, function () { ed.kind = b.getAttribute('data-k'); paintKinds(); });
-  });
-  paintKinds();
-  keep(document.getElementById('muteB'), toggleMute);
-  if (micMode === 'keyboard') document.getElementById('mic').style.display = 'none';
-  fitScreen();
-  setupPen();
-
-  if (s && s.photoId) {
-    note('Loading photo…');
-    call('getStepPhoto', cap.folderId, i, 'original').then(function (uri) {
-      return loadSrc(uri);
-    }).then(function (c) {
-      ed.base = c;
-      ed.strokes = (s.origId && s.strokes) ? s.strokes : [];   // marks can only be redrawn if the unmarked shot exists
-      showPhoto();
-    }).catch(function (e) { note('Could not load photo: ' + e.message); });
-  } else {
-    startCamera();
-  }
-  startMic();
-  if (micMode === 'keyboard') setTimeout(function () { document.getElementById('tx').focus(); }, 300);
-}
-
-function paintKinds() {
-  Array.prototype.forEach.call(document.querySelectorAll('#kinds button'), function (b) {
-    b.className = b.getAttribute('data-k') === ed.kind ? 'on' : '';
-  });
-}
-
-/** Runs fn on touch without taking focus from the transcript box, so the Wispr keyboard stays up. */
-function keep(el, fn) {
-  el.addEventListener('touchstart', function (e) { e.preventDefault(); fn(e); }, { passive: false });
-  el.addEventListener('mousedown', function (e) { e.preventDefault(); fn(e); });
-}
-
-/** Keeps the picture screen inside the visible area above the keyboard. */
-function fitScreen() {
-  var el = document.getElementById('cmp');
-  if (!el) return;
-  var vv = window.visualViewport;
-  el.style.height = (vv ? vv.height : window.innerHeight) + 'px';
-  el.style.top = (vv ? vv.offsetTop : 0) + 'px';
-}
-if (window.visualViewport) {
-  visualViewport.addEventListener('resize', fitScreen);
-  visualViewport.addEventListener('scroll', fitScreen);
-}
-
-function note(t) {
-  var n = document.getElementById('note');
-  if (n) { n.textContent = t || ''; n.style.display = t ? 'flex' : 'none'; }
-}
-
-function toolbar(html, binds) {
-  var t = document.getElementById('tools');
-  t.innerHTML = html;
-  Object.keys(binds).forEach(function (id) { keep(document.getElementById(id), binds[id]); });
-}
+var stream = null;
 
 function startCamera() {
-  document.getElementById('cv').style.display = 'none';
-  var v = document.getElementById('vid');
-  v.style.display = 'block';
-  toolbar('<button id="libB" onclick="pickOne()">Saved photo</button><button class="shut" id="shutB" aria-label="Take picture"></button><button id="noB">No photo</button>',
-    { shutB: shoot, noB: noPhoto });
-  note('Starting camera…');
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return note('No camera access in this browser. Use Saved photo.');
+  $('cv').style.display = 'none';
+  $('vid').style.display = 'block';
+  $('shootBar').style.display = 'flex';
+  $('drawBar').style.display = 'none';
+  shot = null;
+  paintTop();
+  if (stream) return;
+  hint('');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return hint('No camera here. Use the camera roll button.');
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false })
-    .then(function (st) {
-      if (!ed) { st.getTracks().forEach(function (t) { t.stop(); }); return; }
-      stopCamera();
-      stream = st;
-      v.srcObject = st;
-      v.play();
-      note('');
-    })
-    .catch(function (e) { note('Camera blocked (' + e.name + '). Allow camera for this site in Settings, or use Saved photo.'); });
+    .then(function (st) { stream = st; $('vid').srcObject = st; $('vid').play(); })
+    .catch(function (e) { hint('Camera blocked (' + e.name + '). Allow the camera for this site, or use the camera roll button.'); });
 }
 
 function stopCamera() {
@@ -366,73 +209,62 @@ function stopCamera() {
   stream = null;
 }
 
+function hint(t) { $('hint').textContent = t || ''; }
+
 function shoot() {
-  var v = document.getElementById('vid');
+  var v = $('vid');
   if (!v.videoWidth) return;
-  ed.base = scaled(v, v.videoWidth, v.videoHeight);
-  ed.strokes = [];
-  ed.photoDirty = true;
-  stopCamera();
-  showPhoto();
+  scribble(scaled(v, v.videoWidth, v.videoHeight));
 }
 
-function noPhoto() {
-  stopCamera();
-  ed.base = null;
-  ed.strokes = [];
-  ed.photoDirty = ed.hadPhoto;
-  document.getElementById('vid').style.display = 'none';
-  document.getElementById('cv').style.display = 'none';
-  note('No photo for this one. Just talk, then OK.');
-  toolbar('<span class="sp"></span><button id="camB">Camera</button><button id="libB" onclick="pickOne()">Saved photo</button><span class="sp"></span>',
-    { camB: startCamera });
-}
-
-/** Opening the photo library has to come from a real click, so this button drops the keyboard. */
-function pickOne() { document.getElementById('pickOne').click(); }
-
-document.getElementById('pickOne').onchange = function () {
+function pickPhoto() { $('pick').click(); }
+$('pick').onchange = function () {
   var f = this.files[0];
   this.value = '';
-  if (!f || !ed) return;
-  loadFile(f).then(function (c) {
-    stopCamera();
-    ed.base = c; ed.strokes = []; ed.photoDirty = true;
-    showPhoto();
-  }).catch(function (e) { note('Could not open that photo: ' + e.message); });
+  if (!f) return;
+  var url = URL.createObjectURL(f);
+  loadSrc(url).then(function (c) { URL.revokeObjectURL(url); scribble(c); })
+    .catch(function () { toast('Could not open that photo', true); });
 };
 
-function showPhoto() {
-  document.getElementById('vid').style.display = 'none';
-  var cv = document.getElementById('cv');
-  cv.width = ed.base.width;
-  cv.height = ed.base.height;
+// ---------- Scribble ----------
+
+function scribble(base) {
+  shot = { base: base, strokes: [], cur: null };
+  var cv = $('cv');
+  cv.width = base.width;
+  cv.height = base.height;
   cv.style.display = 'block';
-  note('');
+  $('vid').style.display = 'none';
+  $('shootBar').style.display = 'none';
+  $('drawBar').style.display = 'flex';
+  hint('');
   redraw();
-  toolbar('<button id="reB">Retake</button><span class="sp"></span><span style="color:var(--red);font-weight:700;font-size:14px">Draw to mark</span><span class="sp"></span>' +
-    '<button id="unB">Undo</button><button id="clB">Clear</button>',
-    { reB: startCamera,
-      unB: function () { ed.strokes.pop(); ed.photoDirty = true; redraw(); },
-      clB: function () { ed.strokes = []; ed.photoDirty = true; redraw(); } });
 }
 
-function penWidth() { return 0.008; }   // fraction of the photo's long side
+function retake() { startCamera(); }
 
-function redraw() {
-  var cv = document.getElementById('cv'), g = cv.getContext('2d');
-  g.drawImage(ed.base, 0, 0);
+function undo() {
+  if (!shot) return;
+  shot.strokes.pop();
+  redraw();
+}
+
+function redraw(target, s) {
+  s = s || shot;
+  var cv = target || $('cv'), g = cv.getContext('2d');
+  g.drawImage(s.base, 0, 0);
   var L = Math.max(cv.width, cv.height);
   g.strokeStyle = '#ff2a2a';
   g.lineCap = g.lineJoin = 'round';
-  ed.strokes.concat(ed.cur ? [ed.cur] : []).forEach(function (s) {
-    g.lineWidth = s.w * L;
+  s.strokes.concat(s.cur ? [s.cur] : []).forEach(function (st) {
+    g.lineWidth = st.w * L;
     g.beginPath();
-    s.pts.forEach(function (p, k) {
+    st.pts.forEach(function (p, k) {
       var x = p[0] * cv.width, y = p[1] * cv.height;
       if (k) g.lineTo(x, y); else g.moveTo(x, y);
     });
-    if (s.pts.length === 1) g.lineTo(s.pts[0][0] * cv.width + 0.1, s.pts[0][1] * cv.height);
+    if (st.pts.length === 1) g.lineTo(st.pts[0][0] * cv.width + 0.1, st.pts[0][1] * cv.height);
     g.stroke();
   });
 }
@@ -443,133 +275,296 @@ function photoPoint(cv, cx, cy) {
   var sc = Math.min(r.width / cv.width, r.height / cv.height);
   var w = cv.width * sc, h = cv.height * sc;
   var x = (cx - r.left - (r.width - w) / 2) / w, y = (cy - r.top - (r.height - h) / 2) / h;
-  return [Math.round(Math.min(1, Math.max(0, x)) * 1000) / 1000, Math.round(Math.min(1, Math.max(0, y)) * 1000) / 1000];
+  var c = function (v) { return Math.round(Math.min(1, Math.max(0, v)) * 1000) / 1000; };
+  return [c(x), c(y)];
 }
 
-function setupPen() {
-  var cv = document.getElementById('cv'), down = false;
-  function start(cx, cy) { if (!ed.base) return; down = true; ed.cur = { w: penWidth(), pts: [photoPoint(cv, cx, cy)] }; redraw(); }
-  function moveTo(cx, cy) {
-    if (!down) return;
-    var p = photoPoint(cv, cx, cy), last = ed.cur.pts[ed.cur.pts.length - 1];
+/** Red pen on a canvas; getShot() returns the {base, strokes, cur} being drawn on. */
+function pen(cv, getShot, onDraw) {
+  var down = false;
+  function start(cx, cy) { var s = getShot(); if (!s) return; down = true; s.cur = { w: PEN, pts: [photoPoint(cv, cx, cy)] }; onDraw(); }
+  function move(cx, cy) {
+    var s = getShot();
+    if (!down || !s) return;
+    var p = photoPoint(cv, cx, cy), last = s.cur.pts[s.cur.pts.length - 1];
     if (Math.abs(p[0] - last[0]) + Math.abs(p[1] - last[1]) < 0.003) return;
-    ed.cur.pts.push(p);
-    redraw();
+    s.cur.pts.push(p);
+    onDraw();
   }
-  function end() { if (!down) return; down = false; ed.strokes.push(ed.cur); ed.cur = null; ed.photoDirty = true; redraw(); }
-  cv.addEventListener('touchstart', function (e) { e.preventDefault(); var t = e.touches[0]; start(t.clientX, t.clientY); }, { passive: false });
-  cv.addEventListener('touchmove', function (e) { e.preventDefault(); var t = e.touches[0]; moveTo(t.clientX, t.clientY); }, { passive: false });
+  function end() { var s = getShot(); if (!down || !s) return; down = false; s.strokes.push(s.cur); s.cur = null; onDraw(); }
+  cv.addEventListener('touchstart', function (e) { e.preventDefault(); start(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
+  cv.addEventListener('touchmove', function (e) { e.preventDefault(); move(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
   cv.addEventListener('touchend', function (e) { e.preventDefault(); end(); }, { passive: false });
   cv.addEventListener('mousedown', function (e) { e.preventDefault(); start(e.clientX, e.clientY); });
-  cv.addEventListener('mousemove', function (e) { moveTo(e.clientX, e.clientY); });
+  cv.addEventListener('mousemove', function (e) { move(e.clientX, e.clientY); });
   window.addEventListener('mouseup', end);
 }
+pen($('cv'), function () { return shot; }, function () { redraw(); });
 
-// ----- Phone mic: Safari speech recognition, restarted whenever it stops, until OK / Cancel / Mute -----
+/** Next: saves this picture with what was said for it, back to the camera for the next one. */
+function next() {
+  if (!shot) return;
+  flushInterim();
+  var f = { kind: 'step', caption: heard.trim(), photo: $('cv').toDataURL('image/jpeg', 0.85) };
+  if (shot.strokes.length) { f.original = shot.base.toDataURL('image/jpeg', 0.85); f.strokes = shot.strokes; }
+  heard = '';
+  hold(f);
+  startCamera();
+  paintTranscript();
+}
 
-function startMic() {
-  if (micMode !== 'phone' || !ed || muted || rec) return paintMicBar();
-  if (!SR) { micErr = 'none'; return paintMicBar(); }
-  micErr = '';
-  var r = new SR();
+/** Keeps a picture on the phone until the next upload (mute, notepad, Done, leaving the app). */
+function hold(f) {
+  if (!cur) cur = { folderId: '', n: 0, started: stamp() };
+  cur.n++;
+  saveState();
+  var item = { id: Date.now() + '-' + Math.random().toString(36).slice(2, 7), f: f };
+  held.push(item);
+  db('put', item);
+  paintTop();
+}
+
+/** Uploads the waiting pictures in order; starts the SOP folder on the first one. Failed ones stay waiting. */
+function flush() {
+  queue = queue.then(function () {
+    if (!held.length || !cur) return;
+    var mine = cur, total = held.length, n = 0;
+    saving = total;
+    paintTop();
+    toast('Saving ' + total + (total > 1 ? ' pictures…' : ' picture…'));
+    return (mine.folderId ? Promise.resolve() :
+      call('startCapture', 'SOP ' + mine.started, 'not given (Stephan says it in the transcript)')
+        .then(function (c) { mine.folderId = c.folderId; saveState(); })
+    ).then(function step() {
+      if (!held.length) return;
+      var item = held[0];
+      return call('addStep', mine.folderId, item.f).then(function () {
+        held.shift();
+        db('delete', item.id);
+        saving = total - (++n);
+        paintTop();
+        return step();
+      });
+    }).then(function () {
+      saving = 0;
+      paintTop();
+      toast('Saved ✓');
+    });
+  }).catch(function (e) {
+    saving = 0;
+    paintTop();
+    toast(held.length + ' not saved yet (' + e.message + '). Will retry.', true);
+  });
+  return queue;
+}
+
+/** Done: anything said after the last picture becomes a last note, then hand off to SOP Master. */
+function done() {
+  if (!cur) return;
+  flushInterim();
+  if (heard.trim()) { hold({ kind: 'step', caption: heard.trim() }); heard = ''; }
+  setMic(false, true);
+  busy('Sending to SOP Master…');
+  var mine = cur;
+  flush().then(function () {
+    if (held.length) throw new Error('pictures still waiting to upload');
+    if (!mine.folderId) throw new Error('nothing saved yet');
+    return call('finishCapture', mine.folderId, '');
+  }).then(function () {
+    sent.unshift({ folderId: mine.folderId, title: 'SOP ' + mine.started, n: mine.n, date: stamp() });
+    sent = sent.slice(0, 30);
+    cur = null;
+    saveState();
+    busy('');
+    paintTop();
+    paintTranscript();
+    toast('Sent ✓  Tell SOP Master: sync');
+  }).catch(function (e) { busy(''); toast('Not sent: ' + e.message, true); });
+}
+
+function paintTop() {
+  var n = (cur ? cur.n : 0) + (shot ? 1 : 1);
+  $('mid').innerHTML = (cur ? 'SOP · ' : 'New SOP · ') + 'Picture <b class="count">' + n + '</b>' +
+    (saving ? ' · saving ' + saving : held.length ? ' · ' + held.length + ' waiting' : '');
+  $('doneB').style.visibility = cur ? 'visible' : 'hidden';
+}
+
+// ---------- Mic: Safari speech recognition, restarted whenever it stops, until muted ----------
+
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var micOn = false, rec = null, interim = '';
+
+function toggleMic() { setMic(!micOn); }
+
+/** quiet = don't upload (caller uploads itself). Muting is the moment pictures upload. */
+function setMic(on, quiet) {
+  var was = micOn;
+  if (on && !SR) { toast('No speech recognition in this browser. Open in Safari.', true); return; }
+  micOn = on;
+  Array.prototype.forEach.call(document.querySelectorAll('.mic'), function (b) { b.classList.toggle('live', on); });
+  if (on) listen(); else stopListening();
+  paintTranscript();
+  wake(on);
+  if (was && !on && !quiet) flush();
+}
+
+function listen() {
+  if (!micOn || rec) return;
+  var r = new SR(), used = 0;   // used = finals already taken (iOS re-sends old results, so count instead of trusting resultIndex)
   r.lang = 'en-US';
   r.continuous = true;
   r.interimResults = true;
-  var used = 0;          // finals already added (iOS Safari re-sends old results, so count instead of trusting resultIndex)
   r.onresult = function (e) {
-    var finals = [], interim = '';
+    var finals = [], mid = '';
     for (var k = 0; k < e.results.length; k++) {
-      if (e.results[k].isFinal) finals.push(e.results[k][0].transcript); else interim += e.results[k][0].transcript;
+      if (e.results[k].isFinal) finals.push(e.results[k][0].transcript); else mid += e.results[k][0].transcript;
     }
-    for (; used < finals.length; used++) addText(finals[used]);
-    var el = document.getElementById('interim');
-    if (el) el.textContent = interim;
+    for (; used < finals.length; used++) addHeard(finals[used]);
+    interim = mid;
+    paintTranscript();
   };
-  r.onerror = function (e) { if (e.error !== 'no-speech' && e.error !== 'aborted') micErr = e.error; };
+  r.onerror = function (e) {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      toast('Mic blocked: allow Microphone and Siri & Dictation for Safari', true);
+      setMic(false);
+    }
+  };
   r.onend = function () {
     rec = null;
-    var el = document.getElementById('interim');
-    if (el && el.textContent) { addText(el.textContent); el.textContent = ''; }   // keep words not yet marked final
-    if (ed && !muted && micErr !== 'not-allowed' && micErr !== 'service-not-allowed') setTimeout(startMic, 300);
-    else paintMicBar();
+    flushInterim();
+    if (micOn) setTimeout(listen, 250);
   };
-  try { r.start(); rec = r; } catch (e) { micErr = 'start'; }
-  paintMicBar();
+  try { r.start(); rec = r; } catch (e) { setTimeout(listen, 500); }
 }
 
-function stopMic() {
+function stopListening() {
   if (rec) { var r = rec; rec = null; r.onend = null; try { r.stop(); } catch (e) {} }
-  var el = document.getElementById('interim');
-  if (el && el.textContent) { addText(el.textContent); el.textContent = ''; }
+  flushInterim();
 }
 
-function toggleMute() {
-  muted = !muted;
-  if (muted) stopMic(); else startMic();
-  paintMicBar();
-}
-
-function paintMicBar() {
-  var m = document.getElementById('mic');
-  if (!m) return;
-  var st = document.getElementById('micSt'), b = document.getElementById('muteB');
-  m.className = 'mic' + (muted ? ' muted' : rec ? ' on' : '');
-  b.textContent = muted ? 'Unmute' : 'Mute';
-  st.textContent = muted ? 'Muted' :
-    micErr === 'none' ? 'No speech recognition here. Switch to Keyboard mode on Home.' :
-    micErr === 'not-allowed' || micErr === 'service-not-allowed' ? 'Mic blocked. Allow microphone + Siri/dictation, then tap Unmute.' :
-    rec ? 'Listening…' : 'Mic stopped. Tap Mute then Unmute to restart.';
-  if ((micErr === 'not-allowed' || micErr === 'service-not-allowed') && !muted) { muted = true; b.textContent = 'Unmute'; m.className = 'mic muted'; }
-}
-
-function addText(t) {
+function addHeard(t) {
   t = String(t || '').trim();
   if (!t) return;
-  var tx = document.getElementById('tx');
-  if (!tx) return;
-  var v = tx.value.replace(/\s+$/, '');
+  var v = heard.replace(/\s+$/, '');
   if (!v || /[.!?]$/.test(v)) t = t.charAt(0).toUpperCase() + t.slice(1);
-  tx.value = v ? v + ' ' + t : t;
-  tx.scrollTop = tx.scrollHeight;
+  heard = v ? v + ' ' + t : t;
 }
 
-function stopAll() {
-  stopMic();
+/** Words still being heard count for the picture we're on. */
+function flushInterim() {
+  if (interim) { addHeard(interim); interim = ''; }
+}
+
+function paintTranscript() {
+  var el = $('transcript');
+  if (!micOn && !heard) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  var n = (cur ? cur.n : 0) + 1;
+  var txt = heard + (interim ? ' <i>' + esc(interim) + '</i>' : '');
+  el.innerHTML = '<span class="n">Picture ' + n + (micOn ? ' · listening' : ' · muted') + '</span>' +
+    (heard || interim ? esc(heard).slice(-400) + (interim ? ' <i>' + esc(interim) + '</i>' : '') : '<i>Talk: what this is, tools, parts and how many…</i>');
+  el.scrollTop = el.scrollHeight;
+}
+
+var lock = null;
+function wake(on) {
+  try {
+    if (on && navigator.wakeLock && !lock) navigator.wakeLock.request('screen').then(function (l) { lock = l; l.onrelease = function () { lock = null; }; });
+    if (!on && lock) { lock.release(); lock = null; }
+  } catch (e) {}
+}
+
+// ---------- Notepad: your SOPs, pictures and what you said ----------
+
+var padSop = null;   // capture open in the notepad
+
+function openPad() {
+  setMic(false, true);
   stopCamera();
-  ed = null;
+  $('pad').style.display = 'block';
+  padList();
+  if (held.length) flush().then(function () { if (!padSop && $('pad').style.display === 'block') padList(); });
 }
 
-function cancelEdit() {
-  stopAll();
-  list();
+function closePad() {
+  $('pad').style.display = 'none';
+  padSop = null;
+  startCamera();
 }
 
-function saveEdit() {
-  stopMic();             // moves any half-heard words into the box
-  var f = { kind: ed.kind, caption: document.getElementById('tx').value.trim() };
-  if (ed.photoDirty) {
-    if (ed.base) {
-      f.photo = document.getElementById('cv').toDataURL('image/jpeg', 0.85);
-      if (ed.strokes.length) { f.original = ed.base.toDataURL('image/jpeg', 0.85); f.strokes = ed.strokes; }
-    } else {
-      f.photo = null;
-    }
+function padList() {
+  padSop = null;
+  var h = '<div class="padhead"><button class="round glass" onclick="closePad()" aria-label="Camera">' +
+    '<svg viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.5"/></svg></button>' +
+    '<h1>SOP Notes</h1><span style="width:52px"></span></div><div class="padbody">';
+  if (cur && cur.folderId) {
+    h += '<div class="sec">In progress</div><button class="sop" onclick="padOpen(\'' + cur.folderId + '\', true)"><span class="t"><b>SOP ' + esc(cur.started) +
+      '</b><small>' + cur.n + ' pictures</small></span><span class="tag rec">Recording</span></button>';
   }
-  if (ed.i < 0 && !f.photo && !f.caption) return note('Take a picture or say something first.');
-  var i = ed.i, thumb = f.photo ? smallThumb(document.getElementById('cv')) : '';
-  stopAll();
-  busy('Saving…');
-  var p = i < 0 ? call('addStep', cap.folderId, f) : call('updateStep', cap.folderId, i, f);
-  p.then(function (c) {
+  if (sent.length) {
+    h += '<div class="sec">Sent to SOP Master</div>' + sent.map(function (s) {
+      return '<button class="sop" onclick="padOpen(\'' + s.folderId + '\', false)"><span class="t"><b>' + esc(s.title) +
+        '</b><small>' + s.n + ' pictures · sent ' + esc(s.date) + '</small></span><span class="tag">Sent</span></button>';
+    }).join('');
+  }
+  if (held.length) h += '<p class="empty" style="margin:10px 0 0">Uploading ' + held.length + ' waiting…</p>';
+  if (!(cur && cur.folderId) && !sent.length && !held.length) h += '<p class="empty">No SOPs yet.<br>Go back to the camera, tap the mic, and start shooting.</p>';
+  $('pad').innerHTML = h + '</div>';
+}
+
+function padOpen(id, editable) {
+  busy('Loading…');
+  queue.then(function () { return call('getCapture', id); }).then(function (c) {
     busy('');
-    cap = c;
-    var s = cap.steps[i < 0 ? cap.steps.length - 1 : i];
-    if (thumb && s.photoId) thumbs[s.photoId] = thumb;
-    list();
-  }).catch(function (e) {
-    busy('');
-    list();
-    alertBox('Not saved: ' + e.message + '. Try again.');
+    padSop = c;
+    padSop.editable = editable && c.status === 'RECORDING';
+    padShow();
+  }).catch(function (e) { busy(''); toast(e.message, true); });
+}
+
+function padShow() {
+  var c = padSop;
+  var h = '<div class="padhead"><button class="round glass" onclick="padList()" aria-label="Back">' +
+    '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><h1>' + esc(c.title) + '</h1><span style="width:52px"></span></div><div class="padbody">';
+  c.steps.forEach(function (s, i) {
+    h += '<div class="pic"><div class="img" data-i="' + i + '"' + (s.photoId && thumbs[s.photoId] ? ' style="background-image:url(' + thumbs[s.photoId] + ')"' : '') + '>' +
+      '<span class="num glass">' + (i + 1) + '</span>' + (s.photoId ? (thumbs[s.photoId] ? '' : 'loading…') : 'no picture') + '</div>' +
+      '<div class="row"><textarea data-i="' + i + '"' + (c.editable ? '' : ' readonly') + ' placeholder="Nothing said">' + esc(s.caption) + '</textarea>' +
+      (c.editable ? '<button class="del" data-i="' + i + '" aria-label="Delete"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button>' : '') +
+      '</div></div>';
+  });
+  if (!c.steps.length) h += '<p class="empty">No pictures yet.</p>';
+  if (c.editable) h += '<button class="pill white padbtn" onclick="closePad()">Back to camera</button>';
+  $('pad').innerHTML = h + '</div>';
+
+  Array.prototype.forEach.call(document.querySelectorAll('.pic .img[data-i]'), function (el) {
+    var i = Number(el.getAttribute('data-i')), s = c.steps[i];
+    if (!s.photoId || thumbs[s.photoId]) return;
+    call('getStepPhoto', c.folderId, i, 'thumb').then(function (uri) {
+      thumbs[s.photoId] = uri;
+      el.style.backgroundImage = 'url(' + uri + ')';
+      el.lastChild.nodeType === 3 && el.removeChild(el.lastChild);
+    }).catch(function () {});
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.pic textarea'), function (ta) {
+    ta.onchange = function () {
+      var i = Number(ta.getAttribute('data-i'));
+      call('updateStep', c.folderId, i, { caption: ta.value })
+        .then(function (n) { padSop.steps = n.steps; toast('Saved'); })
+        .catch(function (e) { toast('Not saved: ' + e.message, true); });
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.pic .del'), function (b) {
+    b.onclick = function () {
+      if (!b.classList.contains('sure')) { b.classList.add('sure'); toast('Tap again to delete'); return; }   // no confirm() popups
+      busy('Deleting…');
+      call('deleteStep', c.folderId, Number(b.getAttribute('data-i'))).then(function (n) {
+        busy('');
+        padSop.steps = n.steps;
+        if (cur && cur.folderId === c.folderId) { cur.n = n.steps.length + held.length; saveState(); }
+        padShow();
+      }).catch(function (e) { busy(''); toast(e.message, true); });
+    };
   });
 }
 
@@ -594,20 +589,43 @@ function loadSrc(src) {
   });
 }
 
-function loadFile(file) {
-  var url = URL.createObjectURL(file);
-  return loadSrc(url).then(function (c) { URL.revokeObjectURL(url); return c; });
+// ---------- Waiting pictures stay on the phone (IndexedDB) so a closed app doesn't lose them ----------
+
+var dbp = null;
+function db(op, arg) {
+  if (!window.indexedDB) return Promise.resolve([]);
+  dbp = dbp || new Promise(function (ok, no) {
+    var r = indexedDB.open('sopNotes', 1);
+    r.onupgradeneeded = function () { r.result.createObjectStore('held', { keyPath: 'id' }); };
+    r.onsuccess = function () { ok(r.result); };
+    r.onerror = function () { no(r.error); };
+  });
+  return dbp.then(function (d) {
+    return new Promise(function (ok, no) {
+      var st = d.transaction('held', op === 'all' ? 'readonly' : 'readwrite').objectStore('held');
+      var q = op === 'all' ? st.getAll() : op === 'put' ? st.put(arg) : st.delete(arg);
+      q.onsuccess = function () { ok(q.result); };
+      q.onerror = function () { no(q.error); };
+    });
+  }).catch(function () { return []; });
 }
 
-function smallThumb(cv) {
-  var s = 240 / Math.max(cv.width, cv.height), c = document.createElement('canvas');
-  c.width = Math.round(cv.width * s);
-  c.height = Math.round(cv.height * s);
-  c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.7);
-}
+// ---------- Start ----------
 
-home();
+if (!KEY) {
+  document.body.innerHTML = '<p class="empty">Open this with your private SOP link.</p>';
+} else {
+  startCamera();
+  paintTop();
+  db('all').then(function (items) {
+    held = (items || []).sort(function (a, b) { return a.id < b.id ? -1 : 1; });
+    paintTop();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { stopCamera(); flush(); }
+    else if ($('pad').style.display !== 'block' && !shot) startCamera();
+  });
+}
 </script>
 </body>
 </html>
