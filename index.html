@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SOP Capture">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>SOP Capture</title>
+<!--
+  X Vans SOP Capture (2026-10-29). Stephan's phone page for recording SOPs.
+  Per picture: live camera (or a saved photo), red pen, transcript of what he says.
+  Mic modes: "phone" = Safari speech recognition, hands-free, page mute button;
+             "keyboard" = transcript box stays focused so Wispr Flow / iOS dictation keeps typing.
+  Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
+  Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
+-->
+<style>
+:root{--bg:#111;--card:#1d1d1d;--line:#333;--text:#f4f4f4;--muted:#a8a8a8;--accent:#ffc629;--danger:#e5484d;--ok:#3dd68c;--red:#ff2a2a}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font:18px/1.45 -apple-system,system-ui,Roboto,sans-serif;-webkit-text-size-adjust:100%}
+header{position:sticky;top:0;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 16px 10px;border-bottom:1px solid var(--line);z-index:2}
+h1{font-size:22px;margin:0;line-height:1.25}
+main{padding:14px 16px 140px}
+input[type=text],textarea,select{width:100%;font:inherit;font-size:18px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text)}
+label.f{display:block;color:var(--muted);font-size:14px;margin:14px 0 6px}
+button{font-family:inherit;cursor:pointer}
+.btn{display:block;width:100%;font-size:19px;font-weight:700;padding:16px;border-radius:14px;border:0;background:var(--accent);color:#000;margin:10px 0}
+.btn.alt{background:var(--card);color:var(--text);border:1px solid var(--line)}
+.btn.go{background:var(--ok)}
+.btn:disabled{opacity:.4}
+.cat{color:var(--muted);text-transform:uppercase;font-size:13px;letter-spacing:.08em;margin:22px 0 8px}
+.card{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;margin:0 0 10px;color:var(--text);font-size:18px;font-weight:600}
+.card small{display:block;color:var(--muted);font-weight:400;font-size:14px;margin-top:3px}
+.seg{display:flex;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:4px}
+.seg button{flex:1;border:0;border-radius:9px;padding:10px 6px;background:none;color:var(--text);font-size:15px;font-weight:600}
+.seg button.on{background:var(--accent);color:#000}
+.hint{color:var(--muted);font-size:14px;margin:6px 0 0}
+.msg{color:var(--muted);text-align:center;margin-top:40px}
+.err{background:var(--danger);color:#fff;border-radius:12px;padding:10px 14px;margin:10px 0;font-size:15px}
+/* picture list */
+.item{display:flex;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:10px;margin:0 0 10px}
+.item .th{flex:0 0 92px;height:92px;border-radius:10px;background:#000 center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
+.item .tx{flex:1;min-width:0}
+.item .tx b{display:block;font-size:15px}
+.item .tx p{margin:2px 0 6px;font-size:15px;color:#ddd;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.item .row{display:flex;gap:6px}
+.item .row button{border:1px solid var(--line);background:#262626;color:var(--text);border-radius:9px;padding:6px 10px;font-size:14px}
+.item .row button.del{color:var(--danger)}
+.foot{position:fixed;left:0;right:0;bottom:0;padding:10px 16px calc(10px + env(safe-area-inset-bottom));background:var(--bg);border-top:1px solid var(--line);display:flex;gap:10px}
+.foot .btn{margin:0}
+/* picture screen */
+#cmp{position:fixed;left:0;top:0;width:100%;display:flex;flex-direction:column;background:#000;z-index:5}
+.top{display:flex;align-items:center;gap:8px;padding:calc(8px + env(safe-area-inset-top)) 10px 8px;background:var(--bg)}
+.top b{flex:1;text-align:center;font-size:17px}
+.top button{border:0;border-radius:10px;padding:10px 14px;font-size:17px;font-weight:700}
+.top .x{background:var(--card);color:var(--text)}
+.top .okb{background:var(--ok);color:#000;min-width:76px}
+.stage{position:relative;flex:1 1 auto;min-height:150px;background:#000;overflow:hidden}
+.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.stage canvas{touch-action:none}
+.stage .note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);padding:20px;font-size:16px}
+.tools{display:flex;gap:8px;align-items:center;padding:8px 10px;background:var(--bg)}
+.tools button{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;padding:9px 12px;font-size:15px;font-weight:600}
+.tools .shut{flex:0 0 64px;height:64px;border-radius:50%;background:#fff;border:5px solid #888;padding:0;margin:0 auto}
+.tools .sp{flex:1}
+.mic{display:flex;align-items:center;gap:10px;padding:6px 10px;background:var(--bg);font-size:14px;color:var(--muted)}
+.mic .dot{width:12px;height:12px;border-radius:50%;background:#555;flex:none}
+.mic.on .dot{background:var(--red);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.3}}
+.mic .st{flex:1}
+.mic button{border:0;border-radius:10px;padding:9px 14px;font-size:15px;font-weight:700;background:var(--accent);color:#000}
+.mic.muted button{background:var(--danger);color:#fff}
+.txt{padding:0 10px 10px;background:var(--bg)}
+.txt textarea{height:96px;font-size:16px;resize:none}
+.interim{color:var(--muted);font-size:14px;min-height:1.2em;padding:2px 2px 0;font-style:italic}
+.kinds{padding:0 10px 8px;background:var(--bg)}
+.kinds .seg button{font-size:13px;padding:8px 4px}
+.busy{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9;display:none;align-items:center;justify-content:center;font-size:20px;font-weight:700;text-align:center;padding:20px}
+</style>
+</head>
+<body>
+<div id="app"><p class="msg">Loading…</p></div>
+<div class="busy" id="busy"></div>
+<input type="file" id="pickOne" accept="image/*" style="display:none">
+<input type="file" id="pickMany" accept="image/*" multiple style="display:none">
+<script>
+var API = 'https://script.google.com/macros/s/AKfycbzx-xtTjzXE5mAeYwAYDLOIwW3QskPkgpMX5gTYdbfWQ8K87nN_GLMnrhtfyGvdnWGJ/exec';
+var MAX_SIDE = 2000;     // photo long side saved to Drive
+var KINDS = [['step', 'Step'], ['tools', 'Tools & parts'], ['overview', 'Overview']];
+var CATS = ['Electrical', 'Plumbing', 'Cabinets', 'Install', 'Shop', 'Other'];
+
+var app = document.getElementById('app');
+var KEY = new URLSearchParams(location.search).get('k') || localStorage.getItem('capKey') || '';
+if (KEY) localStorage.setItem('capKey', KEY);
+var micMode = localStorage.getItem('micMode') || 'phone';
+var cap = null;          // current capture (from server)
+var thumbs = {};         // photoId -> data URI
+
+function esc(s) {
+  return String(s || '').replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+/** Calls a capture function in the SOP Master App. */
+function call(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  return fetch(API, { method: 'POST', body: JSON.stringify({ fn: fn, key: KEY, args: args }) })
+    .then(function (r) { return r.json(); })
+    .then(function (r) { if (!r.ok) throw new Error(r.error); return r.data; });
+}
+
+function busy(text) {
+  var b = document.getElementById('busy');
+  b.textContent = text || '';
+  b.style.display = text ? 'flex' : 'none';
+}
+
+function fail(e) {
+  busy('');
+  alertBox(e && e.message || String(e));
+}
+
+function alertBox(text) {
+  var d = document.createElement('div');
+  d.className = 'err';
+  d.textContent = text;
+  var m = document.querySelector('main') || app;
+  m.insertBefore(d, m.firstChild);
+  window.scrollTo(0, 0);
+}
+
+// ---------- Home: mic setting, new capture, unfinished captures ----------
+
+function home() {
+  cap = null;
+  if (!KEY) {
+    app.innerHTML = '<main><p class="msg">Open this page with your private capture link.</p></main>';
+    return;
+  }
+  app.innerHTML = '<header><h1>SOP Capture</h1></header><main>' +
+    '<label class="f">Microphone</label><div class="seg" id="micSeg">' +
+    '<button data-m="phone">Phone mic (hands-free)</button><button data-m="keyboard">Keyboard (Wispr Flow)</button></div>' +
+    '<p class="hint" id="micHint"></p>' +
+    '<div class="cat">New SOP</div>' +
+    '<input type="text" id="title" placeholder="Task name (e.g. Install roof fan)">' +
+    '<label class="f">Category</label><select id="cat">' +
+    CATS.map(function (c) { return '<option>' + c + '</option>'; }).join('') + '</select>' +
+    '<button class="btn" onclick="newCapture()">Start</button>' +
+    '<div class="cat">Not sent yet</div><div id="open"><p class="hint">Loading…</p></div></main>';
+  Array.prototype.forEach.call(document.querySelectorAll('#micSeg button'), function (b) {
+    b.onclick = function () { micMode = b.getAttribute('data-m'); localStorage.setItem('micMode', micMode); paintMic(); };
+  });
+  paintMic();
+  call('listCaptures').then(function (list) {
+    document.getElementById('open').innerHTML = list.length ? list.map(function (c) {
+      return '<button class="card" onclick="openCapture(\'' + esc(c.folderId) + '\')">' + esc(c.title) +
+        '<small>' + esc(c.category) + ' · ' + c.n + ' pictures · ' + esc(c.updated) + '</small></button>';
+    }).join('') : '<p class="hint">None.</p>';
+  }).catch(function (e) { document.getElementById('open').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; });
+}
+
+function paintMic() {
+  Array.prototype.forEach.call(document.querySelectorAll('#micSeg button'), function (b) {
+    b.className = b.getAttribute('data-m') === micMode ? 'on' : '';
+  });
+  document.getElementById('micHint').textContent = micMode === 'phone'
+    ? 'Listens the whole time a picture screen is open (AirPods too, if connected). Mute button on screen.' +
+      (SR ? '' : ' This browser has no speech recognition: use Keyboard mode.')
+    : 'The keyboard stays up under the camera so Wispr Flow (or the keyboard mic) keeps typing while you shoot and draw.';
+}
+
+function newCapture() {
+  var t = document.getElementById('title').value.trim();
+  if (!t) return alertBox('Give the task a name.');
+  busy('Starting…');
+  call('startCapture', t, document.getElementById('cat').value).then(function (c) {
+    busy(''); cap = c; list();
+  }).catch(fail);
+}
+
+function openCapture(id) {
+  busy('Loading…');
+  call('getCapture', id).then(function (c) { busy(''); cap = c; list(); }).catch(fail);
+}
+
+// ---------- Picture list for one capture ----------
+
+function list() {
+  stopAll();
+  var kindName = {}; KINDS.forEach(function (k) { kindName[k[0]] = k[1]; });
+  var h = '<header><button class="card" style="width:auto;display:inline-block;padding:6px 12px;font-size:15px;margin:0 0 8px" onclick="home()">‹ Home</button>' +
+    '<h1>' + esc(cap.title) + '</h1><p class="hint" style="margin:2px 0 0">' + esc(cap.category) + ' · ' + cap.steps.length + ' pictures</p></header><main>';
+  cap.steps.forEach(function (s, i) {
+    var th = s.photoId ? (thumbs[s.photoId] ? 'style="background-image:url(' + thumbs[s.photoId] + ')"' : 'data-th="' + i + '"') : '';
+    h += '<div class="item"><div class="th" ' + th + ' onclick="edit(' + i + ')">' + (s.photoId ? (thumbs[s.photoId] ? '' : '…') : 'no photo') + '</div>' +
+      '<div class="tx"><b>' + (i + 1) + '. ' + esc(kindName[s.kind] || 'Step') + '</b><p onclick="edit(' + i + ')">' + (esc(s.caption) || '<i style="color:#888">nothing said yet</i>') + '</p>' +
+      '<div class="row"><button onclick="edit(' + i + ')">Edit</button>' +
+      (i > 0 ? '<button onclick="move(' + i + ',-1)">↑</button>' : '') +
+      (i < cap.steps.length - 1 ? '<button onclick="move(' + i + ',1)">↓</button>' : '') +
+      '<button class="del" onclick="del(' + i + ', this)">Delete</button></div></div></div>';
+  });
+  if (!cap.steps.length) h += '<p class="hint">Tap New picture. Talk the whole time: what it is, tools, parts and how many, what to watch out for.</p>';
+  h += '<button class="btn alt" onclick="document.getElementById(\'pickMany\').click()">Upload photos I already took</button>' +
+    '<div class="cat">Done?</div><label class="f">Anything else (which vans, wheelbase, side)? Optional</label>' +
+    '<textarea id="notes" rows="2">' + esc(cap.notes) + '</textarea>' +
+    '<button class="btn go" onclick="finish()"' + (cap.steps.length ? '' : ' disabled') + '>Send to SOP Master</button></main>' +
+    '<div class="foot"><button class="btn" onclick="edit(-1)">＋ New picture</button></div>';
+  app.innerHTML = h;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-th]'), function (el) {
+    var i = Number(el.getAttribute('data-th')), s = cap.steps[i];
+    call('getStepPhoto', cap.folderId, i, 'thumb').then(function (uri) {
+      if (!uri) { el.textContent = '?'; return; }
+      thumbs[s.photoId] = uri;
+      el.style.backgroundImage = 'url(' + uri + ')';
+      el.textContent = '';
+    }).catch(function () { el.textContent = '?'; });
+  });
+}
+
+function move(i, d) {
+  busy('Moving…');
+  call('moveStep', cap.folderId, i, d).then(function (c) { busy(''); cap = c; list(); }).catch(fail);
+}
+
+function del(i, b) {
+  if (b.textContent !== 'Sure?') { b.textContent = 'Sure?'; return; }   // no confirm() popups
+  busy('Deleting…');
+  call('deleteStep', cap.folderId, i).then(function (c) { busy(''); cap = c; list(); }).catch(fail);
+}
+
+function finish() {
+  busy('Sending…');
+  call('finishCapture', cap.folderId, document.getElementById('notes').value).then(function () {
+    busy('');
+    app.innerHTML = '<main><p class="msg" style="font-size:56px;color:var(--ok);margin-bottom:0">✓</p>' +
+      '<p class="msg" style="color:var(--text);font-size:22px;font-weight:700;margin-top:0">Sent: ' + esc(cap.title) + '</p>' +
+      '<p class="msg">Tell SOP Master: <b>sync</b></p><button class="btn" onclick="home()">Home</button></main>';
+  }).catch(fail);
+}
+
+/** Uploads several saved photos, one picture each (no transcript yet: edit each to talk over it). */
+document.getElementById('pickMany').onchange = function () {
+  var files = Array.prototype.slice.call(this.files);
+  this.value = '';
+  var n = 0;
+  (function next() {
+    if (n >= files.length) { busy(''); return list(); }
+    busy('Uploading ' + (n + 1) + ' of ' + files.length + '…');
+    loadFile(files[n++]).then(function (c) {
+      return call('addStep', cap.folderId, { kind: 'step', caption: '', photo: c.toDataURL('image/jpeg', 0.85) });
+    }).then(function (c) { cap = c; next(); }).catch(fail);
+  })();
+};
+
+// ---------- Picture screen: camera, red pen, mic, transcript ----------
+
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+var ed = null;           // the picture being edited
+var stream = null, rec = null, muted = false, micErr = '';
+
+/** i = -1 for a new picture. */
+function edit(i) {
+  var s = i >= 0 ? cap.steps[i] : null;
+  ed = {
+    i: i, kind: s ? s.kind : (cap.steps.length ? 'step' : 'tools'),
+    base: null,          // canvas with the unmarked photo
+    strokes: [], cur: null, photoDirty: false, hadPhoto: !!(s && s.photoId)
+  };
+  muted = false;
+  app.innerHTML = '<div id="cmp">' +
+    '<div class="top"><button class="x" onclick="cancelEdit()">Cancel</button><b>' + (i >= 0 ? 'Picture ' + (i + 1) : 'New picture ' + (cap.steps.length + 1)) + '</b>' +
+    '<button class="okb" onclick="saveEdit()">OK</button></div>' +
+    '<div class="stage" id="stage"><video id="vid" playsinline muted autoplay></video><canvas id="cv" style="display:none"></canvas><div class="note" id="note"></div></div>' +
+    '<div class="tools" id="tools"></div>' +
+    '<div class="mic" id="mic"><span class="dot"></span><span class="st" id="micSt"></span><button id="muteB">Mute</button></div>' +
+    '<div class="txt"><div class="interim" id="interim"></div><textarea id="tx" placeholder="' +
+    (micMode === 'keyboard' ? 'Tap here, start Wispr Flow, then just talk' : 'What you say shows up here. You can type too.') + '"></textarea></div>' +
+    '<div class="kinds"><div class="seg" id="kinds">' + KINDS.map(function (k) { return '<button data-k="' + k[0] + '">' + k[1] + '</button>'; }).join('') + '</div></div>' +
+    '</div>';
+  document.getElementById('tx').value = s ? s.caption : '';
+  Array.prototype.forEach.call(document.querySelectorAll('#kinds button'), function (b) {
+    keep(b, function () { ed.kind = b.getAttribute('data-k'); paintKinds(); });
+  });
+  paintKinds();
+  keep(document.getElementById('muteB'), toggleMute);
+  if (micMode === 'keyboard') document.getElementById('mic').style.display = 'none';
+  fitScreen();
+  setupPen();
+
+  if (s && s.photoId) {
+    note('Loading photo…');
+    call('getStepPhoto', cap.folderId, i, 'original').then(function (uri) {
+      return loadSrc(uri);
+    }).then(function (c) {
+      ed.base = c;
+      ed.strokes = (s.origId && s.strokes) ? s.strokes : [];   // marks can only be redrawn if the unmarked shot exists
+      showPhoto();
+    }).catch(function (e) { note('Could not load photo: ' + e.message); });
+  } else {
+    startCamera();
+  }
+  startMic();
+  if (micMode === 'keyboard') setTimeout(function () { document.getElementById('tx').focus(); }, 300);
+}
+
+function paintKinds() {
+  Array.prototype.forEach.call(document.querySelectorAll('#kinds button'), function (b) {
+    b.className = b.getAttribute('data-k') === ed.kind ? 'on' : '';
+  });
+}
+
+/** Runs fn on touch without taking focus from the transcript box, so the Wispr keyboard stays up. */
+function keep(el, fn) {
+  el.addEventListener('touchstart', function (e) { e.preventDefault(); fn(e); }, { passive: false });
+  el.addEventListener('mousedown', function (e) { e.preventDefault(); fn(e); });
+}
+
+/** Keeps the picture screen inside the visible area above the keyboard. */
+function fitScreen() {
+  var el = document.getElementById('cmp');
+  if (!el) return;
+  var vv = window.visualViewport;
+  el.style.height = (vv ? vv.height : window.innerHeight) + 'px';
+  el.style.top = (vv ? vv.offsetTop : 0) + 'px';
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', fitScreen);
+  visualViewport.addEventListener('scroll', fitScreen);
+}
+
+function note(t) {
+  var n = document.getElementById('note');
+  if (n) { n.textContent = t || ''; n.style.display = t ? 'flex' : 'none'; }
+}
+
+function toolbar(html, binds) {
+  var t = document.getElementById('tools');
+  t.innerHTML = html;
+  Object.keys(binds).forEach(function (id) { keep(document.getElementById(id), binds[id]); });
+}
+
+function startCamera() {
+  document.getElementById('cv').style.display = 'none';
+  var v = document.getElementById('vid');
+  v.style.display = 'block';
+  toolbar('<button id="libB" onclick="pickOne()">Saved photo</button><button class="shut" id="shutB" aria-label="Take picture"></button><button id="noB">No photo</button>',
+    { shutB: shoot, noB: noPhoto });
+  note('Starting camera…');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return note('No camera access in this browser. Use Saved photo.');
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false })
+    .then(function (st) {
+      if (!ed) { st.getTracks().forEach(function (t) { t.stop(); }); return; }
+      stopCamera();
+      stream = st;
+      v.srcObject = st;
+      v.play();
+      note('');
+    })
+    .catch(function (e) { note('Camera blocked (' + e.name + '). Allow camera for this site in Settings, or use Saved photo.'); });
+}
+
+function stopCamera() {
+  if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+  stream = null;
+}
+
+function shoot() {
+  var v = document.getElementById('vid');
+  if (!v.videoWidth) return;
+  ed.base = scaled(v, v.videoWidth, v.videoHeight);
+  ed.strokes = [];
+  ed.photoDirty = true;
+  stopCamera();
+  showPhoto();
+}
+
+function noPhoto() {
+  stopCamera();
+  ed.base = null;
+  ed.strokes = [];
+  ed.photoDirty = ed.hadPhoto;
+  document.getElementById('vid').style.display = 'none';
+  document.getElementById('cv').style.display = 'none';
+  note('No photo for this one. Just talk, then OK.');
+  toolbar('<span class="sp"></span><button id="camB">Camera</button><button id="libB" onclick="pickOne()">Saved photo</button><span class="sp"></span>',
+    { camB: startCamera });
+}
+
+/** Opening the photo library has to come from a real click, so this button drops the keyboard. */
+function pickOne() { document.getElementById('pickOne').click(); }
+
+document.getElementById('pickOne').onchange = function () {
+  var f = this.files[0];
+  this.value = '';
+  if (!f || !ed) return;
+  loadFile(f).then(function (c) {
+    stopCamera();
+    ed.base = c; ed.strokes = []; ed.photoDirty = true;
+    showPhoto();
+  }).catch(function (e) { note('Could not open that photo: ' + e.message); });
+};
+
+function showPhoto() {
+  document.getElementById('vid').style.display = 'none';
+  var cv = document.getElementById('cv');
+  cv.width = ed.base.width;
+  cv.height = ed.base.height;
+  cv.style.display = 'block';
+  note('');
+  redraw();
+  toolbar('<button id="reB">Retake</button><span class="sp"></span><span style="color:var(--red);font-weight:700;font-size:14px">Draw to mark</span><span class="sp"></span>' +
+    '<button id="unB">Undo</button><button id="clB">Clear</button>',
+    { reB: startCamera,
+      unB: function () { ed.strokes.pop(); ed.photoDirty = true; redraw(); },
+      clB: function () { ed.strokes = []; ed.photoDirty = true; redraw(); } });
+}
+
+function penWidth() { return 0.008; }   // fraction of the photo's long side
+
+function redraw() {
+  var cv = document.getElementById('cv'), g = cv.getContext('2d');
+  g.drawImage(ed.base, 0, 0);
+  var L = Math.max(cv.width, cv.height);
+  g.strokeStyle = '#ff2a2a';
+  g.lineCap = g.lineJoin = 'round';
+  ed.strokes.concat(ed.cur ? [ed.cur] : []).forEach(function (s) {
+    g.lineWidth = s.w * L;
+    g.beginPath();
+    s.pts.forEach(function (p, k) {
+      var x = p[0] * cv.width, y = p[1] * cv.height;
+      if (k) g.lineTo(x, y); else g.moveTo(x, y);
+    });
+    if (s.pts.length === 1) g.lineTo(s.pts[0][0] * cv.width + 0.1, s.pts[0][1] * cv.height);
+    g.stroke();
+  });
+}
+
+/** Finger position as 0..1 of the photo (the canvas is letterboxed by object-fit: contain). */
+function photoPoint(cv, cx, cy) {
+  var r = cv.getBoundingClientRect();
+  var sc = Math.min(r.width / cv.width, r.height / cv.height);
+  var w = cv.width * sc, h = cv.height * sc;
+  var x = (cx - r.left - (r.width - w) / 2) / w, y = (cy - r.top - (r.height - h) / 2) / h;
+  return [Math.round(Math.min(1, Math.max(0, x)) * 1000) / 1000, Math.round(Math.min(1, Math.max(0, y)) * 1000) / 1000];
+}
+
+function setupPen() {
+  var cv = document.getElementById('cv'), down = false;
+  function start(cx, cy) { if (!ed.base) return; down = true; ed.cur = { w: penWidth(), pts: [photoPoint(cv, cx, cy)] }; redraw(); }
+  function moveTo(cx, cy) {
+    if (!down) return;
+    var p = photoPoint(cv, cx, cy), last = ed.cur.pts[ed.cur.pts.length - 1];
+    if (Math.abs(p[0] - last[0]) + Math.abs(p[1] - last[1]) < 0.003) return;
+    ed.cur.pts.push(p);
+    redraw();
+  }
+  function end() { if (!down) return; down = false; ed.strokes.push(ed.cur); ed.cur = null; ed.photoDirty = true; redraw(); }
+  cv.addEventListener('touchstart', function (e) { e.preventDefault(); var t = e.touches[0]; start(t.clientX, t.clientY); }, { passive: false });
+  cv.addEventListener('touchmove', function (e) { e.preventDefault(); var t = e.touches[0]; moveTo(t.clientX, t.clientY); }, { passive: false });
+  cv.addEventListener('touchend', function (e) { e.preventDefault(); end(); }, { passive: false });
+  cv.addEventListener('mousedown', function (e) { e.preventDefault(); start(e.clientX, e.clientY); });
+  cv.addEventListener('mousemove', function (e) { moveTo(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', end);
+}
+
+// ----- Phone mic: Safari speech recognition, restarted whenever it stops, until OK / Cancel / Mute -----
+
+function startMic() {
+  if (micMode !== 'phone' || !ed || muted || rec) return paintMicBar();
+  if (!SR) { micErr = 'none'; return paintMicBar(); }
+  micErr = '';
+  var r = new SR();
+  r.lang = 'en-US';
+  r.continuous = true;
+  r.interimResults = true;
+  var used = 0;          // finals already added (iOS Safari re-sends old results, so count instead of trusting resultIndex)
+  r.onresult = function (e) {
+    var finals = [], interim = '';
+    for (var k = 0; k < e.results.length; k++) {
+      if (e.results[k].isFinal) finals.push(e.results[k][0].transcript); else interim += e.results[k][0].transcript;
+    }
+    for (; used < finals.length; used++) addText(finals[used]);
+    var el = document.getElementById('interim');
+    if (el) el.textContent = interim;
+  };
+  r.onerror = function (e) { if (e.error !== 'no-speech' && e.error !== 'aborted') micErr = e.error; };
+  r.onend = function () {
+    rec = null;
+    var el = document.getElementById('interim');
+    if (el && el.textContent) { addText(el.textContent); el.textContent = ''; }   // keep words not yet marked final
+    if (ed && !muted && micErr !== 'not-allowed' && micErr !== 'service-not-allowed') setTimeout(startMic, 300);
+    else paintMicBar();
+  };
+  try { r.start(); rec = r; } catch (e) { micErr = 'start'; }
+  paintMicBar();
+}
+
+function stopMic() {
+  if (rec) { var r = rec; rec = null; r.onend = null; try { r.stop(); } catch (e) {} }
+  var el = document.getElementById('interim');
+  if (el && el.textContent) { addText(el.textContent); el.textContent = ''; }
+}
+
+function toggleMute() {
+  muted = !muted;
+  if (muted) stopMic(); else startMic();
+  paintMicBar();
+}
+
+function paintMicBar() {
+  var m = document.getElementById('mic');
+  if (!m) return;
+  var st = document.getElementById('micSt'), b = document.getElementById('muteB');
+  m.className = 'mic' + (muted ? ' muted' : rec ? ' on' : '');
+  b.textContent = muted ? 'Unmute' : 'Mute';
+  st.textContent = muted ? 'Muted' :
+    micErr === 'none' ? 'No speech recognition here. Switch to Keyboard mode on Home.' :
+    micErr === 'not-allowed' || micErr === 'service-not-allowed' ? 'Mic blocked. Allow microphone + Siri/dictation, then tap Unmute.' :
+    rec ? 'Listening…' : 'Mic stopped. Tap Mute then Unmute to restart.';
+  if ((micErr === 'not-allowed' || micErr === 'service-not-allowed') && !muted) { muted = true; b.textContent = 'Unmute'; m.className = 'mic muted'; }
+}
+
+function addText(t) {
+  t = String(t || '').trim();
+  if (!t) return;
+  var tx = document.getElementById('tx');
+  if (!tx) return;
+  var v = tx.value.replace(/\s+$/, '');
+  if (!v || /[.!?]$/.test(v)) t = t.charAt(0).toUpperCase() + t.slice(1);
+  tx.value = v ? v + ' ' + t : t;
+  tx.scrollTop = tx.scrollHeight;
+}
+
+function stopAll() {
+  stopMic();
+  stopCamera();
+  ed = null;
+}
+
+function cancelEdit() {
+  stopAll();
+  list();
+}
+
+function saveEdit() {
+  stopMic();             // moves any half-heard words into the box
+  var f = { kind: ed.kind, caption: document.getElementById('tx').value.trim() };
+  if (ed.photoDirty) {
+    if (ed.base) {
+      f.photo = document.getElementById('cv').toDataURL('image/jpeg', 0.85);
+      if (ed.strokes.length) { f.original = ed.base.toDataURL('image/jpeg', 0.85); f.strokes = ed.strokes; }
+    } else {
+      f.photo = null;
+    }
+  }
+  if (ed.i < 0 && !f.photo && !f.caption) return note('Take a picture or say something first.');
+  var i = ed.i, thumb = f.photo ? smallThumb(document.getElementById('cv')) : '';
+  stopAll();
+  busy('Saving…');
+  var p = i < 0 ? call('addStep', cap.folderId, f) : call('updateStep', cap.folderId, i, f);
+  p.then(function (c) {
+    busy('');
+    cap = c;
+    var s = cap.steps[i < 0 ? cap.steps.length - 1 : i];
+    if (thumb && s.photoId) thumbs[s.photoId] = thumb;
+    list();
+  }).catch(function (e) {
+    busy('');
+    list();
+    alertBox('Not saved: ' + e.message + '. Try again.');
+  });
+}
+
+// ---------- Image helpers ----------
+
+/** Draws an image/video into a new canvas, long side at most MAX_SIDE. */
+function scaled(src, w, h) {
+  var s = Math.min(1, MAX_SIDE / Math.max(w, h));
+  var c = document.createElement('canvas');
+  c.width = Math.round(w * s);
+  c.height = Math.round(h * s);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+
+function loadSrc(src) {
+  return new Promise(function (ok, no) {
+    var img = new Image();
+    img.onload = function () { ok(scaled(img, img.naturalWidth, img.naturalHeight)); };
+    img.onerror = function () { no(new Error('bad image')); };
+    img.src = src;
+  });
+}
+
+function loadFile(file) {
+  var url = URL.createObjectURL(file);
+  return loadSrc(url).then(function (c) { URL.revokeObjectURL(url); return c; });
+}
+
+function smallThumb(cv) {
+  var s = 240 / Math.max(cv.width, cv.height), c = document.createElement('canvas');
+  c.width = Math.round(cv.width * s);
+  c.height = Math.round(cv.height * s);
+  c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.7);
+}
+
+home();
+</script>
+</body>
+</html>
