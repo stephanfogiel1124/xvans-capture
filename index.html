@@ -26,7 +26,7 @@
   v2.5: notepad, in-progress SOP: swipe right = send to SOP Master (clicks at the send point), swipe left = Delete
   (asks first; folder goes to the Drive trash, deleteCapture). Camera "Next" is now "Save".
   v2.6: camera roll picks several pictures at once; each opens in turn to mark + talk, Save = next one,
-  Retake = skip it. After a camera roll picture, Save opens the camera roll again for the next one (X = camera).
+  Retake = skip it. Notepad: typing under a picture shows a Save button. After a camera roll picture, Save opens the camera roll again for the next one (X = camera).
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -87,6 +87,8 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .pic .num{position:absolute;left:10px;top:10px;min-width:30px;height:30px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;padding:0 9px}
 .pic .row{display:flex;gap:8px;padding:10px}
 .pic textarea{flex:1;min-height:76px;background:transparent;border:0;color:#fff;font:inherit;font-size:15px;resize:vertical;outline:none;padding:4px 2px}
+.pic .save{display:none;margin:0 10px 12px auto;padding:10px 26px;font-size:15px}
+.pic .save.show{display:block}
 .pic .del{color:var(--muted);align-self:flex-start;padding:6px}
 .pic .del.sure{color:var(--red)}
 .padbtn{display:block;width:100%;text-align:center;margin:16px 0 0}
@@ -874,7 +876,7 @@ function padShow() {
       (s.photoId ? (thumbs[s.photoId] ? '' : 'loading…') : 'no picture') + '</div>' +
       '<div class="row"><textarea data-i="' + i + '"' + (c.editable ? '' : ' readonly') + ' placeholder="Nothing said">' + esc(s.caption) + '</textarea>' +
       (c.editable ? '<button class="del" data-i="' + i + '" aria-label="Delete"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button>' : '') +
-      '</div></div>';
+      '</div>' + (c.editable ? '<button class="pill white save" data-i="' + i + '">Save&nbsp;&nbsp;✓</button>' : '') + '</div>';
   });
   if (c.waiting) h += '<p class="empty" style="margin:10px 0">' + c.waiting + ' more still uploading</p>';
   else if (!c.steps.length) h += '<p class="empty">No pictures yet.</p>';
@@ -891,13 +893,25 @@ function padShow() {
       el.lastChild.nodeType === 3 && el.removeChild(el.lastChild);
     }).catch(function () {});
   });
+  // Typing shows a Save button under the text; tapping out of the box saves too.
   Array.prototype.forEach.call(document.querySelectorAll('.pic textarea'), function (ta) {
-    ta.onchange = function () {
-      var i = Number(ta.getAttribute('data-i'));
-      call('updateStep', c.folderId, i, { caption: ta.value })
-        .then(function (n) { padSop.steps = n.steps; toast('Saved'); })
-        .catch(function (e) { toast('Not saved: ' + e.message, true); });
-    };
+    var i = Number(ta.getAttribute('data-i')), btn = ta.parentNode.parentNode.querySelector('.save'), saved = ta.value;
+    if (!btn) return;
+    function save() {
+      var v = ta.value;
+      if (v === saved) return;
+      btn.textContent = 'Saving…';
+      call('updateStep', c.folderId, i, { caption: v })
+        .then(function (n) {
+          saved = v; padSop.steps = n.steps; toast('Saved ✓');
+          btn.innerHTML = 'Save&nbsp;&nbsp;✓';
+          btn.classList.toggle('show', ta.value !== saved);
+        })
+        .catch(function (e) { btn.innerHTML = 'Save&nbsp;&nbsp;✓'; toast('Not saved: ' + e.message, true); });
+    }
+    ta.oninput = function () { btn.classList.toggle('show', ta.value !== saved); };
+    ta.onchange = save;
+    btn.onclick = function () { save(); ta.blur(); };
   });
   Array.prototype.forEach.call(document.querySelectorAll('.pic .del'), function (b) {
     b.onclick = function () {
