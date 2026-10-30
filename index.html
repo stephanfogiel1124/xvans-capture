@@ -19,6 +19,8 @@
   Top left = notepad (his SOPs, pictures + text, edit). Done = Status NEW, hands off to SOP Master.
   v2.1: coming back to the app (unlock / switch back) always lands on the live camera of the SOP he was
   on, mic back on if it was on. A picture he was still marking when he left is kept as-is.
+  Notepad: tap an SOP = back to the camera adding pictures to it (no loading). Sent ones not synced yet
+  reopen (reopenCapture). Other unfinished SOPs wait under "In progress". The pictures icon = view/edit.
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -69,6 +71,9 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .sop .t{flex:1;min-width:0}
 .sop .t b{display:block;font-weight:600}
 .sop .t small{color:var(--muted);font-size:13px}
+.card{display:flex;gap:8px;align-items:stretch;margin:0 0 10px}
+.card .sop{margin:0}
+.card .view{flex:none;width:58px;border-radius:20px;background:#111;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--muted)}
 .tag{font-size:11px;letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--line);border-radius:999px;padding:4px 10px;color:var(--muted)}
 .tag.rec{color:#fff;border-color:var(--red);background:rgba(255,59,48,.18)}
 .pic{background:#111;border:1px solid var(--line);border-radius:20px;overflow:hidden;margin:0 0 12px}
@@ -146,6 +151,7 @@ if (KEY) localStorage.setItem('capKey', KEY);
 // Current SOP: folder in SOP Inbox (created on the first save) and how many pictures it has.
 var cur = JSON.parse(localStorage.getItem('curSop') || 'null');   // {folderId, n, started}
 var sent = JSON.parse(localStorage.getItem('sentSops') || '[]');  // [{folderId, title, n, date}]
+var paused = JSON.parse(localStorage.getItem('pausedSops') || '[]');  // other unfinished SOPs: [{folderId, n, started}]
 var held = [];                   // pictures taken but not uploaded yet: [{id, f}]
 var queue = Promise.resolve();   // uploads run one after another
 var saving = 0;
@@ -166,6 +172,7 @@ function stamp() {
 function saveState() {
   localStorage.setItem('curSop', JSON.stringify(cur));
   localStorage.setItem('sentSops', JSON.stringify(sent));
+  localStorage.setItem('pausedSops', JSON.stringify(paused));
 }
 
 /** Calls a capture function in the SOP Master App. */
@@ -509,19 +516,53 @@ function padList() {
   var h = '<div class="padhead"><button class="round glass" onclick="closePad()" aria-label="Camera">' +
     '<svg viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.5"/></svg></button>' +
     '<h1>SOP Notes</h1><span style="width:52px"></span></div><div class="padbody">';
-  if (cur && cur.folderId) {
-    h += '<div class="sec">In progress</div><button class="sop" onclick="padOpen(\'' + cur.folderId + '\', true)"><span class="t"><b>SOP ' + esc(cur.started) +
-      '</b><small>' + cur.n + ' pictures</small></span><span class="tag rec">Recording</span></button>';
+  var going = (cur && cur.folderId ? [cur] : []).concat(paused);
+  if (going.length) {
+    h += '<div class="sec">In progress · tap to add pictures</div>' + going.map(function (s) {
+      return card(s.folderId, 'SOP ' + s.started, s.n + ' pictures', s === cur ? 'Now' : 'Recording', true);
+    }).join('');
   }
   if (sent.length) {
     h += '<div class="sec">Sent to SOP Master</div>' + sent.map(function (s) {
-      return '<button class="sop" onclick="padOpen(\'' + s.folderId + '\', false)"><span class="t"><b>' + esc(s.title) +
-        '</b><small>' + s.n + ' pictures · sent ' + esc(s.date) + '</small></span><span class="tag">Sent</span></button>';
+      return card(s.folderId, s.title, s.n + ' pictures · sent ' + s.date, 'Sent', false);
     }).join('');
   }
   if (held.length) h += '<p class="empty" style="margin:10px 0 0">Uploading ' + held.length + ' waiting…</p>';
-  if (!(cur && cur.folderId) && !sent.length && !held.length) h += '<p class="empty">No SOPs yet.<br>Go back to the camera, tap the mic, and start shooting.</p>';
+  if (!going.length && !sent.length && !held.length) h += '<p class="empty">No SOPs yet.<br>Go back to the camera, tap the mic, and start shooting.</p>';
   $('pad').innerHTML = h + '</div>';
+}
+
+/** Notepad row: tap = keep adding pictures to it; the pictures icon = look at / edit what's saved. */
+function card(id, title, sub, tag, going) {
+  return '<div class="card"><button class="sop" onclick="addTo(\'' + id + '\')"><span class="t"><b>' + esc(title) +
+    '</b><small>' + esc(sub) + '</small></span><span class="tag' + (going ? ' rec' : '') + '">' + tag + '</span></button>' +
+    '<button class="view" onclick="padOpen(\'' + id + '\', ' + going + ')" aria-label="See pictures">' +
+    '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 16l-5-5-8.5 8.5"/></svg></button></div>';
+}
+
+/** Makes this SOP the one new pictures go into and goes back to the camera.
+ *  Unfinished ones switch instantly; a sent one is reopened first (only if SOP Master hasn't synced it yet). */
+function addTo(id) {
+  if (cur && cur.folderId === id) return closePad();
+  var p = paused.filter(function (s) { return s.folderId === id; })[0];
+  var s = sent.filter(function (s) { return s.folderId === id; })[0];
+  if (!p) busy('Opening…');
+  queue.then(function () {
+    if (held.length) throw new Error('pictures still waiting to upload, try again');
+    if (p) return { folderId: id, n: p.n, started: p.started };
+    return call('reopenCapture', id).then(function (c) {
+      return { folderId: id, n: c.steps.length, started: s ? s.title.replace(/^SOP /, '') : c.started };
+    });
+  }).then(function (next) {
+    if (cur && cur.folderId) paused.unshift(cur);
+    paused = paused.filter(function (x) { return x.folderId !== id; });
+    sent = sent.filter(function (x) { return x.folderId !== id; });
+    cur = next;
+    saveState();
+    busy('');
+    closePad();
+    toast('Adding to SOP ' + cur.started.slice(11));
+  }).catch(function (e) { busy(''); toast(e.message, true); });
 }
 
 function padOpen(id, editable) {
@@ -546,7 +587,7 @@ function padShow() {
       '</div></div>';
   });
   if (!c.steps.length) h += '<p class="empty">No pictures yet.</p>';
-  if (c.editable) h += '<button class="pill white padbtn" onclick="closePad()">Back to camera</button>';
+  if (c.editable) h += '<button class="pill white padbtn" onclick="addTo(\'' + c.folderId + '\')">Add pictures</button>';
   $('pad').innerHTML = h + '</div>';
 
   Array.prototype.forEach.call(document.querySelectorAll('.pic .img[data-i]'), function (el) {
