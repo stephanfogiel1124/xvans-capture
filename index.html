@@ -17,6 +17,8 @@
   notepad, taps Done, or leaves the app. Never in the background while shooting.
   No name or category: he says them, SOP Master pulls them from the transcript at sync.
   Top left = notepad (his SOPs, pictures + text, edit). Done = Status NEW, hands off to SOP Master.
+  v2.1: coming back to the app (unlock / switch back) always lands on the live camera of the SOP he was
+  on, mic back on if it was on. A picture he was still marking when he left is kept as-is.
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -304,12 +306,18 @@ pen($('cv'), function () { return shot; }, function () { redraw(); });
 /** Next: saves this picture with what was said for it, back to the camera for the next one. */
 function next() {
   if (!shot) return;
+  keepShot();
+  startCamera();
+}
+
+/** Holds the picture being marked, with what was said for it. */
+function keepShot() {
   flushInterim();
   var f = { kind: 'step', caption: heard.trim(), photo: $('cv').toDataURL('image/jpeg', 0.85) };
   if (shot.strokes.length) { f.original = shot.base.toDataURL('image/jpeg', 0.85); f.strokes = shot.strokes; }
   heard = '';
+  shot = null;
   hold(f);
-  startCamera();
   paintTranscript();
 }
 
@@ -383,8 +391,8 @@ function done() {
 }
 
 function paintTop() {
-  var n = (cur ? cur.n : 0) + (shot ? 1 : 1);
-  $('mid').innerHTML = (cur ? 'SOP · ' : 'New SOP · ') + 'Picture <b class="count">' + n + '</b>' +
+  var n = (cur ? cur.n : 0) + 1;
+  $('mid').innerHTML = (cur ? 'SOP ' + esc(cur.started.slice(11)) + ' · ' : 'New SOP · ') + 'Picture <b class="count">' + n + '</b>' +
     (saving ? ' · saving ' + saving : held.length ? ' · ' + held.length + ' waiting' : '');
   $('doneB').style.visibility = cur ? 'visible' : 'hidden';
 }
@@ -393,14 +401,16 @@ function paintTop() {
 
 var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 var micOn = false, rec = null, interim = '';
+var autoMic = false;   // mic was turned back on by the app (not a tap); if Safari refuses, just stay muted
 
-function toggleMic() { setMic(!micOn); }
+function toggleMic() { autoMic = false; setMic(!micOn); }
 
 /** quiet = don't upload (caller uploads itself). Muting is the moment pictures upload. */
 function setMic(on, quiet) {
   var was = micOn;
   if (on && !SR) { toast('No speech recognition in this browser. Open in Safari.', true); return; }
   micOn = on;
+  localStorage.setItem('micOn', on ? '1' : '');
   Array.prototype.forEach.call(document.querySelectorAll('.mic'), function (b) { b.classList.toggle('live', on); });
   if (on) listen(); else stopListening();
   paintTranscript();
@@ -419,12 +429,14 @@ function listen() {
     for (var k = 0; k < e.results.length; k++) {
       if (e.results[k].isFinal) finals.push(e.results[k][0].transcript); else mid += e.results[k][0].transcript;
     }
+    autoMic = false;
     for (; used < finals.length; used++) addHeard(finals[used]);
     interim = mid;
     paintTranscript();
   };
   r.onerror = function (e) {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      if (autoMic) { autoMic = false; setMic(false, true); toast('Tap the mic to listen'); return; }
       toast('Mic blocked: allow Microphone and Siri & Dictation for Safari', true);
       setMic(false);
     }
@@ -617,13 +629,27 @@ if (!KEY) {
 } else {
   startCamera();
   paintTop();
+  if (localStorage.getItem('micOn')) { autoMic = true; setMic(true); }
   db('all').then(function (items) {
     held = (items || []).sort(function (a, b) { return a.id < b.id ? -1 : 1; });
     paintTop();
   });
+  // Leaving the app: keep the picture being marked, upload. Coming back: straight to the live camera of the
+  // same SOP (notepad closed), mic back on if it was on, so he can shoot the moment the phone is unlocked.
+  var micWas = false;
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { stopCamera(); flush(); }
-    else if ($('pad').style.display !== 'block' && !shot) startCamera();
+    if (document.hidden) {
+      micWas = micOn;
+      if (shot) keepShot();
+      setMic(false, true);
+      localStorage.setItem('micOn', micWas ? '1' : '');
+      stopCamera();
+      flush();
+    } else {
+      if ($('pad').style.display === 'block') { $('pad').style.display = 'none'; padSop = null; }
+      startCamera();
+      if (micWas) { autoMic = true; setMic(true); }
+    }
   });
 }
 </script>
