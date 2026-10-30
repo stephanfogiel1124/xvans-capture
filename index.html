@@ -23,6 +23,8 @@
   reopen (reopenCapture). Other unfinished SOPs wait under "In progress". The pictures icon = view/edit.
   v2.3: each waiting picture knows its own SOP (lid), so switching SOPs or "New SOP" never waits for uploads.
   v2.4: notepad, tap a picture = fix its red marks (undo, eraser, clear, draw more), saved in the background.
+  v2.5: notepad, in-progress SOP: swipe right = send to SOP Master (clicks at the send point), swipe left = Delete
+  (asks first; folder goes to the Drive trash, deleteCapture). Camera "Next" is now "Save".
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -93,6 +95,21 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 #mark{position:fixed;inset:0;z-index:8;background:#000;display:none}
 #mark canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;touch-action:none}
 .round.on{background:#fff;color:#000;border-color:#fff}
+.swipe{position:relative;margin:0 0 10px;border-radius:20px;overflow:hidden;touch-action:pan-y}
+.swipe .card{position:relative;margin:0;background:#000;will-change:transform}
+.under{position:absolute;inset:0;display:flex;align-items:center;border-radius:20px;opacity:0}
+.under.send{background:#1c7a43;padding-left:22px;gap:10px;font-weight:600;transition:background .15s}
+.under.send svg{width:28px;height:28px;stroke-width:2.2;transition:transform .25s cubic-bezier(.3,1.8,.5,1)}
+.under.send.armed{background:#2fbf68}
+.under.send.armed svg{transform:scale(1.35)}
+.under.del{background:var(--red);justify-content:flex-end}
+.under.del button{width:96px;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:13px;font-weight:600}
+.sheetbg{position:fixed;inset:0;z-index:10;background:rgba(0,0,0,.55);display:none;align-items:flex-end;justify-content:center}
+.sheet{width:100%;max-width:520px;margin:0 10px calc(10px + env(safe-area-inset-bottom));border-radius:24px;padding:20px;text-align:center}
+.sheet b{display:block;font-size:17px;margin-bottom:4px}
+.sheet p{margin:0 0 16px;color:var(--muted);font-size:14px}
+.sheet .pill{display:block;width:100%;margin-top:8px}
+.pill.red{background:var(--red);border-color:var(--red);color:#fff}
 .busy{position:fixed;inset:0;z-index:9;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;font-weight:600}
 </style>
 </head>
@@ -137,7 +154,7 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
         <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
       </button>
     </div>
-    <button class="pill white" style="padding:16px 34px;font-size:17px" onclick="next()">Next&nbsp;&nbsp;→</button>
+    <button class="pill white" style="padding:16px 34px;font-size:17px" onclick="next()">Save&nbsp;&nbsp;✓</button>
     <button class="round glass mic" onclick="toggleMic()" aria-label="Microphone">
       <svg viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/><path class="slash" d="M4 4l16 16"/></svg>
     </button>
@@ -170,6 +187,7 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
   </div>
 </div>
 <div class="busy" id="busy"></div>
+<div class="sheetbg" id="sheet" onclick="if(event.target===this)sheetClose()"><div class="sheet glass" id="sheetBody"></div></div>
 <input type="file" id="pick" accept="image/*" style="display:none">
 
 <script>
@@ -186,7 +204,7 @@ var sent = JSON.parse(localStorage.getItem('sentSops') || '[]');  // [{folderId,
 var paused = JSON.parse(localStorage.getItem('pausedSops') || '[]');  // other unfinished SOPs, same shape as cur
 var held = [];                   // pictures taken but not uploaded yet: [{id, lid, f}]
 if (cur && !cur.lid) cur.lid = 'l0';   // from before v2.3
-paused.forEach(function (s, i) { if (!s.lid) s.lid = 'p' + i; });
+paused.forEach(function (s, i) { if (!s.lid) s.lid = 'p' + i; delete s.sending; });
 var queue = Promise.resolve();   // uploads run one after another
 var saving = 0;
 var shot = null;                 // {base canvas, strokes} while scribbling
@@ -419,16 +437,18 @@ function flush() {
     toast('Saving ' + total + (total > 1 ? ' pictures…' : ' picture…'));
     return (function step() {
       if (!held.length) return;
-      var item = held[0], mine = sopOf(item);
+      var item = held[0];
+      if (gone[item.lid]) { held.shift(); db('delete', item.id); return step(); }
+      var mine = sopOf(item);
       return (mine.folderId ? Promise.resolve() :
         call('startCapture', 'SOP ' + mine.started, 'not given (Stephan says it in the transcript)')
           .then(function (c) { mine.folderId = c.folderId; saveState(); })
       ).then(function () {
         return call('addStep', mine.folderId, item.f);
       }).then(function () {
-        held.shift();
+        held = held.filter(function (x) { return x !== item; });
         db('delete', item.id);
-        saving = total - (++n);
+        saving = held.length;
         paintTop();
         padRefresh();
         return step();
@@ -454,21 +474,52 @@ function done() {
   if (heard.trim()) { hold({ kind: 'step', caption: heard.trim() }); heard = ''; }
   setMic(false, true);
   busy('Sending to SOP Master…');
-  var mine = cur;
-  flush().then(function () {
-    if (waiting(mine.lid)) throw new Error('pictures still waiting to upload');
-    if (!mine.folderId) throw new Error('nothing saved yet');
-    return call('finishCapture', mine.folderId, '');
-  }).then(function () {
-    sent.unshift({ folderId: mine.folderId, title: 'SOP ' + mine.started, n: mine.n, date: stamp() });
-    sent = sent.slice(0, 30);
-    cur = null;
-    saveState();
+  sendSop(cur).then(function () {
     busy('');
-    paintTop();
     paintTranscript();
     toast('Sent ✓  Tell SOP Master: sync');
-  }).catch(function (e) { busy(''); toast('Not sent: ' + e.message, true); });
+  }, function (e) { busy(''); toast('Not sent: ' + e.message, true); });
+}
+
+/** Hands one SOP to SOP Master (Status NEW) after its waiting pictures upload. If it was the current one,
+ *  the next picture starts a new SOP; if sending fails it goes back where it was. */
+function sendSop(s) {
+  var wasCur = s === cur;
+  if (wasCur) { paused.unshift(cur); cur = null; }
+  s.sending = true;
+  saveState(); paintTop(); padRefresh();
+  return flush().then(function () {
+    if (waiting(s.lid)) throw new Error('pictures still waiting to upload');
+    if (!s.folderId) throw new Error('nothing saved yet');
+    return call('finishCapture', s.folderId, '');
+  }).then(function () {
+    paused = paused.filter(function (x) { return x !== s; });
+    sent.unshift({ folderId: s.folderId, title: 'SOP ' + s.started, n: s.n, date: stamp() });
+    sent = sent.slice(0, 30);
+    saveState(); paintTop(); padRefresh();
+  }, function (e) {
+    delete s.sending;
+    if (wasCur && !cur) { paused = paused.filter(function (x) { return x !== s; }); cur = s; }
+    saveState(); paintTop(); padRefresh();
+    throw e;
+  });
+}
+
+var gone = {};   // lids of deleted SOPs, so an upload already running can't bring them back
+
+/** Deletes an unfinished SOP: its waiting pictures on the phone, and its Drive folder (to the trash). */
+function deleteSop(lid) {
+  var s = [cur].concat(paused).filter(function (x) { return x && x.lid === lid; })[0];
+  if (!s) return;
+  gone[lid] = true;
+  if (s === cur) cur = null;
+  paused = paused.filter(function (x) { return x !== s; });
+  held.filter(function (i) { return i.lid === lid; }).forEach(function (i) { db('delete', i.id); });
+  held = held.filter(function (i) { return i.lid !== lid; });
+  saveState(); paintTop(); padRefresh();
+  queue = queue.then(function () {   // after any upload into it finishes, so its folderId is known
+    if (s.folderId) return call('deleteCapture', s.folderId);
+  }).then(function () { toast('Deleted ✓'); }, function (e) { toast('Not deleted on Drive: ' + e.message, true); });
 }
 
 function paintTop() {
@@ -581,7 +632,11 @@ function openPad() {
 
 function pics(n) { return n + (n === 1 ? ' picture' : ' pictures'); }
 
-function padRefresh() { if ($('pad').style.display === 'block' && !padSop) padList(); }
+function padRefresh() {
+  if ($('pad').style.display !== 'block' || padSop) return;
+  if (dragging || openSwipe) { padStale = true; return; }   // don't redraw under his finger
+  padList();
+}
 
 /** New SOP: the one he was on waits under "In progress"; the next picture starts a fresh SOP. */
 function newSop() {
@@ -603,22 +658,138 @@ function padList() {
   var h = '<div class="padhead"><button class="round glass" onclick="closePad()" aria-label="Camera">' +
     '<svg viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.5"/></svg></button>' +
     '<h1>SOP Notes</h1><button class="pill white" onclick="newSop()">+ New SOP</button></div><div class="padbody">';
-  var going = (cur ? [cur] : []).concat(paused);
+  var going = [cur].concat(paused).filter(function (s) { return s && !s.sending; });
+  var sending = paused.filter(function (s) { return s.sending; }).length;
   if (going.length) {
-    h += '<div class="sec">In progress · tap to add pictures</div>' + going.map(function (s) {
+    h += '<div class="sec">In progress · swipe → send · ← delete</div>' + going.map(function (s) {
       var w = waiting(s.lid);
-      return card("addTo('" + s.lid + "')", "padOpen('" + s.folderId + "', true, '" + s.lid + "')", 'SOP ' + s.started,
-        pics(s.n) + (w ? ' · ' + w + ' uploading' : ''), s === cur ? 'Now' : 'Recording', true);
+      return '<div class="swipe" data-lid="' + s.lid + '">' +
+        '<div class="under send"><svg viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11"/></svg>Send to SOP Master</div>' +
+        '<div class="under del"><button onclick="askDelete(\'' + s.lid + '\')"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>Delete</button></div>' +
+        card("addTo('" + s.lid + "')", "padOpen('" + s.folderId + "', true, '" + s.lid + "')", 'SOP ' + s.started,
+          pics(s.n) + (w ? ' · ' + w + ' uploading' : ''), s === cur ? 'Now' : 'Recording', true) + '</div>';
     }).join('');
   }
+  if (sending) h += '<p class="empty" style="margin:4px 0 10px">Sending ' + sending + ' to SOP Master…</p>';
   if (sent.length) {
     h += '<div class="sec">Sent to SOP Master · tap to add more</div>' + sent.map(function (s) {
       return card("reopen('" + s.folderId + "')", "padOpen('" + s.folderId + "', false)", s.title, pics(s.n) + ' · sent ' + s.date, 'Sent', false);
     }).join('');
   }
-  if (!going.length && !sent.length) h += '<p class="empty">No SOPs yet.<br>Go back to the camera, tap the mic, and start shooting.</p>';
+  if (!going.length && !sent.length && !sending) h += '<p class="empty">No SOPs yet.<br>Go back to the camera, tap the mic, and start shooting.</p>';
   $('pad').innerHTML = h + '</div>';
+  openSwipe = null;
+  Array.prototype.forEach.call(document.querySelectorAll('.swipe'), swipeRow);
 }
+
+// ---------- Swipe an in-progress SOP: right = send to SOP Master, left = show Delete ----------
+
+var openSwipe = null, dragging = false, padStale = false;
+
+/** A click you can feel: Android vibrates; iPhone (iOS 18+) ticks when a hidden switch is toggled. */
+var tick = document.createElement('label');
+tick.innerHTML = '<input type="checkbox" switch>';
+tick.style.display = 'none';
+document.body.appendChild(tick);
+function haptic() { try { if (navigator.vibrate) navigator.vibrate(12); else tick.click(); } catch (e) {} }
+
+function closeSwipe() {
+  var row = openSwipe;
+  openSwipe = null;
+  if (row) {
+    var card = row.querySelector('.card');
+    card.style.transition = 'transform .35s cubic-bezier(.2,.9,.3,1.15)';
+    card.style.transform = 'translateX(0)';
+    row.classList.remove('open');
+  }
+  if (padStale) { padStale = false; setTimeout(padRefresh, 360); }
+}
+
+function swipeRow(row) {
+  var card = row.querySelector('.card'), sendU = row.querySelector('.under.send'), delU = row.querySelector('.under.del');
+  var D = 96, x0 = null, y0, base, dx = 0, mode = null, armed = false, pid = null, swiped = false;
+  function W() { return row.offsetWidth; }
+  function T() { return Math.max(110, W() * 0.38); }   // send point
+  function set(x, anim) {
+    card.style.transition = anim ? 'transform .35s cubic-bezier(.2,.9,.3,1.15)' : 'none';
+    card.style.transform = 'translateX(' + x + 'px)';
+    sendU.style.opacity = x > 0 ? 1 : 0;
+    delU.style.opacity = x < 0 ? 1 : 0;
+  }
+  row.addEventListener('pointerdown', function (e) {
+    swiped = false;
+    if (openSwipe && openSwipe !== row) closeSwipe();
+    x0 = e.clientX; y0 = e.clientY; pid = e.pointerId; mode = null; dx = 0;
+    base = row.classList.contains('open') ? -D : 0;
+  });
+  row.addEventListener('pointermove', function (e) {
+    if (x0 === null || e.pointerId !== pid) return;
+    var mx = e.clientX - x0, my = e.clientY - y0;
+    if (!mode) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      if (Math.abs(my) > Math.abs(mx)) { x0 = null; return; }   // scrolling the list
+      mode = 'x'; dragging = true;
+      try { row.setPointerCapture(pid); } catch (err) {}
+    }
+    dx = base + mx;
+    if (dx > 0) {
+      var a = dx > T();
+      if (a !== armed) { armed = a; sendU.classList.toggle('armed', a); haptic(); }
+      set(a ? dx + 14 : dx);   // jumps a little at the send point: the "click"
+    } else {
+      if (armed) { armed = false; sendU.classList.remove('armed'); }
+      set(dx < -D ? -D + (dx + D) * 0.3 : dx);
+    }
+  });
+  function up(e) {
+    if (e.pointerId !== pid) return;
+    var was = mode;
+    x0 = null; mode = null; dragging = false;
+    if (!was) return;
+    swiped = true;
+    if (dx > 0 && armed) return fly();
+    armed = false; sendU.classList.remove('armed');
+    if (dx < -D / 2) { set(-D, true); row.classList.add('open'); openSwipe = row; haptic(); }
+    else { set(0, true); row.classList.remove('open'); if (openSwipe === row) openSwipe = null; if (padStale) closeSwipe(); }
+  }
+  row.addEventListener('pointerup', up);
+  row.addEventListener('pointercancel', up);
+  // a swipe is not a tap; tapping an open row closes it (except its Delete button)
+  row.addEventListener('click', function (e) {
+    if (swiped) { swiped = false; e.stopPropagation(); e.preventDefault(); return; }
+    if (row.classList.contains('open') && !e.target.closest('.under.del')) { e.stopPropagation(); e.preventDefault(); closeSwipe(); }
+  }, true);
+  function fly() {
+    var lid = row.getAttribute('data-lid');
+    card.style.transition = 'transform .24s cubic-bezier(.5,0,.9,.4)';
+    card.style.transform = 'translateX(' + (W() + 40) + 'px)';
+    setTimeout(function () {
+      row.style.height = row.offsetHeight + 'px';
+      row.offsetHeight;
+      row.style.transition = 'height .22s ease, margin .22s ease';
+      row.style.height = '0px';
+      row.style.marginBottom = '0px';
+    }, 240);
+    setTimeout(function () {
+      var s = [cur].concat(paused).filter(function (x) { return x && x.lid === lid; })[0];
+      if (!s) return;
+      sendSop(s).then(function () { toast('Sent ✓  Tell SOP Master: sync'); }, function (err) { toast('Not sent: ' + err.message, true); });
+    }, 480);
+  }
+}
+
+// ---------- Confirm sheet (no browser popups) ----------
+
+function askDelete(lid) {
+  var s = [cur].concat(paused).filter(function (x) { return x && x.lid === lid; })[0];
+  if (!s) return;
+  $('sheetBody').innerHTML = '<b>Delete SOP ' + esc(s.started) + '?</b><p>' + pics(s.n) +
+    '. The folder goes to the Drive trash (kept 30 days).</p>' +
+    '<button class="pill red" onclick="sheetClose();deleteSop(\'' + lid + '\')">Delete</button>' +
+    '<button class="pill glass" onclick="sheetClose()">Cancel</button>';
+  $('sheet').style.display = 'flex';
+}
+function sheetClose() { $('sheet').style.display = 'none'; closeSwipe(); }
 
 /** Notepad row: tap = keep adding pictures to it; the pictures icon = look at / edit what's saved. */
 function card(tap, view, title, sub, tag, going) {
