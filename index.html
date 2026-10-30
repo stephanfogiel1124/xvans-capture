@@ -895,19 +895,20 @@ function padShow() {
   });
   // Typing shows a Save button under the text; tapping out of the box saves too.
   Array.prototype.forEach.call(document.querySelectorAll('.pic textarea'), function (ta) {
-    var i = Number(ta.getAttribute('data-i')), btn = ta.parentNode.parentNode.querySelector('.save'), saved = ta.value;
+    var i = Number(ta.getAttribute('data-i')), btn = ta.parentNode.parentNode.querySelector('.save'), saved = ta.value, sending = null;
     if (!btn) return;
     function save() {
       var v = ta.value;
-      if (v === saved) return;
+      if (v === saved || v === sending) return;   // tapping Save also blurs the box: save once
+      sending = v;
       btn.textContent = 'Saving…';
       call('updateStep', c.folderId, i, { caption: v })
         .then(function (n) {
-          saved = v; padSop.steps = n.steps; toast('Saved ✓');
+          saved = v; sending = null; padSop.steps = n.steps; toast('Saved ✓');
           btn.innerHTML = 'Save&nbsp;&nbsp;✓';
           btn.classList.toggle('show', ta.value !== saved);
         })
-        .catch(function (e) { btn.innerHTML = 'Save&nbsp;&nbsp;✓'; toast('Not saved: ' + e.message, true); });
+        .catch(function (e) { sending = null; btn.innerHTML = 'Save&nbsp;&nbsp;✓'; toast('Not saved: ' + e.message, true); });
     }
     ta.oninput = function () { btn.classList.toggle('show', ta.value !== saved); };
     ta.onchange = save;
