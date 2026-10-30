@@ -26,7 +26,7 @@
   v2.5: notepad, in-progress SOP: swipe right = send to SOP Master (clicks at the send point), swipe left = Delete
   (asks first; folder goes to the Drive trash, deleteCapture). Camera "Next" is now "Save".
   v2.6: camera roll picks several pictures at once; each opens in turn to mark + talk, Save = next one,
-  Retake = skip it, then back to the camera.
+  Retake = skip it. After a camera roll picture, Save opens the camera roll again for the next one (X = camera).
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -297,6 +297,7 @@ function nextShot() {
   loadSrc(url).then(function (c) {
     URL.revokeObjectURL(url);
     scribble(c);
+    shot.roll = true;
     if (rollN > 1) hint('Camera roll ' + k + ' of ' + rollN);
   }).catch(function () { URL.revokeObjectURL(url); toast('Could not open that photo', true); nextShot(); });
 }
@@ -316,7 +317,15 @@ function scribble(base) {
   redraw();
 }
 
-function retake() { nextShot(); }   // on a camera roll picture: skip it
+function retake() { afterShot(shot && shot.roll); }   // on a camera roll picture: skip it
+
+/** Next picked picture; else the camera, and the camera roll opens again if this one came from it
+ *  (must run inside the tap, iPhone only opens the picker on a tap). X in the picker = stay on the camera. */
+function afterShot(wasRoll) {
+  if (roll.length) return nextShot();
+  startCamera();
+  if (wasRoll) pickPhoto();
+}
 
 function undo() {
   if (!shot) return;
@@ -398,8 +407,9 @@ pen($('mcv'), function () { return marking; }, function () { redraw($('mcv'), ma
 /** Next: saves this picture with what was said for it, back to the camera for the next one. */
 function next() {
   if (!shot) return;
+  var wasRoll = shot.roll;
   keepShot();
-  nextShot();
+  afterShot(wasRoll);
 }
 
 /** Holds the picture being marked, with what was said for it. */
