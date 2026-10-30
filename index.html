@@ -21,6 +21,7 @@
   on, mic back on if it was on. A picture he was still marking when he left is kept as-is.
   Notepad: tap an SOP = back to the camera adding pictures to it (no loading). Sent ones not synced yet
   reopen (reopenCapture). Other unfinished SOPs wait under "In progress". The pictures icon = view/edit.
+  v2.3: each waiting picture knows its own SOP (lid), so switching SOPs or "New SOP" never waits for uploads.
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -149,10 +150,12 @@ var KEY = new URLSearchParams(location.search).get('k') || localStorage.getItem(
 if (KEY) localStorage.setItem('capKey', KEY);
 
 // Current SOP: folder in SOP Inbox (created on the first save) and how many pictures it has.
-var cur = JSON.parse(localStorage.getItem('curSop') || 'null');   // {folderId, n, started}
+var cur = JSON.parse(localStorage.getItem('curSop') || 'null');   // {lid, folderId, n, started}; lid = id on this phone
 var sent = JSON.parse(localStorage.getItem('sentSops') || '[]');  // [{folderId, title, n, date}]
-var paused = JSON.parse(localStorage.getItem('pausedSops') || '[]');  // other unfinished SOPs: [{folderId, n, started}]
-var held = [];                   // pictures taken but not uploaded yet: [{id, f}]
+var paused = JSON.parse(localStorage.getItem('pausedSops') || '[]');  // other unfinished SOPs, same shape as cur
+var held = [];                   // pictures taken but not uploaded yet: [{id, lid, f}]
+if (cur && !cur.lid) cur.lid = 'l0';   // from before v2.3
+paused.forEach(function (s, i) { if (!s.lid) s.lid = 'p' + i; });
 var queue = Promise.resolve();   // uploads run one after another
 var saving = 0;
 var shot = null;                 // {base canvas, strokes} while scribbling
@@ -330,37 +333,56 @@ function keepShot() {
 
 /** Keeps a picture on the phone until the next upload (mute, notepad, Done, leaving the app). */
 function hold(f) {
-  if (!cur) cur = { folderId: '', n: 0, started: stamp() };
+  if (!cur) cur = { lid: newId(), folderId: '', n: 0, started: stamp() };
   cur.n++;
   saveState();
-  var item = { id: Date.now() + '-' + Math.random().toString(36).slice(2, 7), f: f };
+  var item = { id: newId(), lid: cur.lid, f: f };
   held.push(item);
   db('put', item);
   paintTop();
 }
 
-/** Uploads the waiting pictures in order; starts the SOP folder on the first one. Failed ones stay waiting. */
+function newId() { return Date.now() + '-' + Math.random().toString(36).slice(2, 7); }
+
+/** The SOP a waiting picture belongs to (current or paused). Never loses a picture: unknown -> new paused SOP. */
+function sopOf(item) {
+  var s = [cur].concat(paused).filter(function (x) { return x && x.lid === item.lid; })[0];
+  if (!s) {
+    s = { lid: item.lid || newId(), folderId: '', n: 1, started: stamp() };
+    item.lid = s.lid;
+    paused.push(s);
+    saveState();
+  }
+  return s;
+}
+function waiting(lid) { return held.filter(function (i) { return i.lid === lid; }).length; }
+
+/** Uploads the waiting pictures in order, each into its own SOP; starts an SOP's folder on its first one.
+ *  Failed ones stay waiting. */
 function flush() {
   queue = queue.then(function () {
-    if (!held.length || !cur) return;
-    var mine = cur, total = held.length, n = 0;
+    if (!held.length) return;
+    var total = held.length, n = 0;
     saving = total;
     paintTop();
     toast('Saving ' + total + (total > 1 ? ' pictures…' : ' picture…'));
-    return (mine.folderId ? Promise.resolve() :
-      call('startCapture', 'SOP ' + mine.started, 'not given (Stephan says it in the transcript)')
-        .then(function (c) { mine.folderId = c.folderId; saveState(); })
-    ).then(function step() {
+    return (function step() {
       if (!held.length) return;
-      var item = held[0];
-      return call('addStep', mine.folderId, item.f).then(function () {
+      var item = held[0], mine = sopOf(item);
+      return (mine.folderId ? Promise.resolve() :
+        call('startCapture', 'SOP ' + mine.started, 'not given (Stephan says it in the transcript)')
+          .then(function (c) { mine.folderId = c.folderId; saveState(); })
+      ).then(function () {
+        return call('addStep', mine.folderId, item.f);
+      }).then(function () {
         held.shift();
         db('delete', item.id);
         saving = total - (++n);
         paintTop();
+        padRefresh();
         return step();
       });
-    }).then(function () {
+    })().then(function () {
       saving = 0;
       paintTop();
       toast('Saved ✓');
@@ -368,6 +390,7 @@ function flush() {
   }).catch(function (e) {
     saving = 0;
     paintTop();
+    padRefresh();
     toast(held.length + ' not saved yet (' + e.message + '). Will retry.', true);
   });
   return queue;
@@ -382,7 +405,7 @@ function done() {
   busy('Sending to SOP Master…');
   var mine = cur;
   flush().then(function () {
-    if (held.length) throw new Error('pictures still waiting to upload');
+    if (waiting(mine.lid)) throw new Error('pictures still waiting to upload');
     if (!mine.folderId) throw new Error('nothing saved yet');
     return call('finishCapture', mine.folderId, '');
   }).then(function () {
@@ -502,7 +525,20 @@ function openPad() {
   stopCamera();
   $('pad').style.display = 'block';
   padList();
-  if (held.length) flush().then(function () { if (!padSop && $('pad').style.display === 'block') padList(); });
+  if (held.length) flush();
+}
+
+function pics(n) { return n + (n === 1 ? ' picture' : ' pictures'); }
+
+function padRefresh() { if ($('pad').style.display === 'block' && !padSop) padList(); }
+
+/** New SOP: the one he was on waits under "In progress"; the next picture starts a fresh SOP. */
+function newSop() {
+  if (cur) paused.unshift(cur);
+  cur = null;
+  saveState();
+  closePad();
+  toast('New SOP · Picture 1');
 }
 
 function closePad() {
@@ -515,62 +551,67 @@ function padList() {
   padSop = null;
   var h = '<div class="padhead"><button class="round glass" onclick="closePad()" aria-label="Camera">' +
     '<svg viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.5"/></svg></button>' +
-    '<h1>SOP Notes</h1><span style="width:52px"></span></div><div class="padbody">';
-  var going = (cur && cur.folderId ? [cur] : []).concat(paused);
+    '<h1>SOP Notes</h1><button class="pill white" onclick="newSop()">+ New SOP</button></div><div class="padbody">';
+  var going = (cur ? [cur] : []).concat(paused);
   if (going.length) {
     h += '<div class="sec">In progress · tap to add pictures</div>' + going.map(function (s) {
-      return card(s.folderId, 'SOP ' + s.started, s.n + ' pictures', s === cur ? 'Now' : 'Recording', true);
+      var w = waiting(s.lid);
+      return card("addTo('" + s.lid + "')", "padOpen('" + s.folderId + "', true, '" + s.lid + "')", 'SOP ' + s.started,
+        pics(s.n) + (w ? ' · ' + w + ' uploading' : ''), s === cur ? 'Now' : 'Recording', true);
     }).join('');
   }
   if (sent.length) {
-    h += '<div class="sec">Sent to SOP Master</div>' + sent.map(function (s) {
-      return card(s.folderId, s.title, s.n + ' pictures · sent ' + s.date, 'Sent', false);
+    h += '<div class="sec">Sent to SOP Master · tap to add more</div>' + sent.map(function (s) {
+      return card("reopen('" + s.folderId + "')", "padOpen('" + s.folderId + "', false)", s.title, pics(s.n) + ' · sent ' + s.date, 'Sent', false);
     }).join('');
   }
-  if (held.length) h += '<p class="empty" style="margin:10px 0 0">Uploading ' + held.length + ' waiting…</p>';
-  if (!going.length && !sent.length && !held.length) h += '<p class="empty">No SOPs yet.<br>Go back to the camera, tap the mic, and start shooting.</p>';
+  if (!going.length && !sent.length) h += '<p class="empty">No SOPs yet.<br>Go back to the camera, tap the mic, and start shooting.</p>';
   $('pad').innerHTML = h + '</div>';
 }
 
 /** Notepad row: tap = keep adding pictures to it; the pictures icon = look at / edit what's saved. */
-function card(id, title, sub, tag, going) {
-  return '<div class="card"><button class="sop" onclick="addTo(\'' + id + '\')"><span class="t"><b>' + esc(title) +
+function card(tap, view, title, sub, tag, going) {
+  return '<div class="card"><button class="sop" onclick="' + tap + '"><span class="t"><b>' + esc(title) +
     '</b><small>' + esc(sub) + '</small></span><span class="tag' + (going ? ' rec' : '') + '">' + tag + '</span></button>' +
-    '<button class="view" onclick="padOpen(\'' + id + '\', ' + going + ')" aria-label="See pictures">' +
+    '<button class="view" onclick="' + view + '" aria-label="See pictures">' +
     '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="M20.5 16l-5-5-8.5 8.5"/></svg></button></div>';
 }
 
-/** Makes this SOP the one new pictures go into and goes back to the camera.
- *  Unfinished ones switch instantly; a sent one is reopened first (only if SOP Master hasn't synced it yet). */
-function addTo(id) {
-  if (cur && cur.folderId === id) return closePad();
-  var p = paused.filter(function (s) { return s.folderId === id; })[0];
-  var s = sent.filter(function (s) { return s.folderId === id; })[0];
-  if (!p) busy('Opening…');
-  queue.then(function () {
-    if (held.length) throw new Error('pictures still waiting to upload, try again');
-    if (p) return { folderId: id, n: p.n, started: p.started };
-    return call('reopenCapture', id).then(function (c) {
-      return { folderId: id, n: c.steps.length, started: s ? s.title.replace(/^SOP /, '') : c.started };
-    });
-  }).then(function (next) {
-    if (cur && cur.folderId) paused.unshift(cur);
-    paused = paused.filter(function (x) { return x.folderId !== id; });
-    sent = sent.filter(function (x) { return x.folderId !== id; });
-    cur = next;
+/** Makes this unfinished SOP the one new pictures go into and goes back to the camera. Instant. */
+function addTo(lid) {
+  var p = paused.filter(function (s) { return s.lid === lid; })[0];
+  if (p) {
+    if (cur) paused.unshift(cur);
+    paused = paused.filter(function (x) { return x !== p; });
+    cur = p;
     saveState();
+  }
+  closePad();
+  if (cur) toast('Adding to SOP ' + cur.started.slice(11));
+}
+
+/** A sent one is reopened first (only if SOP Master hasn't synced it yet), then pictures go into it. */
+function reopen(id) {
+  var s = sent.filter(function (x) { return x.folderId === id; })[0];
+  busy('Opening…');
+  call('reopenCapture', id).then(function (c) {
+    var p = { lid: newId(), folderId: id, n: c.steps.length, started: s ? s.title.replace(/^SOP /, '') : c.started };
+    sent = sent.filter(function (x) { return x.folderId !== id; });
+    paused.unshift(p);
     busy('');
-    closePad();
-    toast('Adding to SOP ' + cur.started.slice(11));
+    addTo(p.lid);
   }).catch(function (e) { busy(''); toast(e.message, true); });
 }
 
-function padOpen(id, editable) {
+/** Saved pictures and words of one SOP. Doesn't wait for uploads; says how many are still on the way. */
+function padOpen(id, editable, lid) {
+  if (!id) return toast('First pictures still uploading…');
   busy('Loading…');
-  queue.then(function () { return call('getCapture', id); }).then(function (c) {
+  call('getCapture', id).then(function (c) {
     busy('');
     padSop = c;
     padSop.editable = editable && c.status === 'RECORDING';
+    padSop.waiting = lid ? waiting(lid) : 0;
     padShow();
   }).catch(function (e) { busy(''); toast(e.message, true); });
 }
@@ -586,8 +627,10 @@ function padShow() {
       (c.editable ? '<button class="del" data-i="' + i + '" aria-label="Delete"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button>' : '') +
       '</div></div>';
   });
-  if (!c.steps.length) h += '<p class="empty">No pictures yet.</p>';
-  if (c.editable) h += '<button class="pill white padbtn" onclick="addTo(\'' + c.folderId + '\')">Add pictures</button>';
+  if (c.waiting) h += '<p class="empty" style="margin:10px 0">' + c.waiting + ' more still uploading</p>';
+  else if (!c.steps.length) h += '<p class="empty">No pictures yet.</p>';
+  var mine = [cur].concat(paused).filter(function (x) { return x && x.folderId === c.folderId; })[0];
+  if (c.editable && mine) h += '<button class="pill white padbtn" onclick="addTo(\'' + mine.lid + '\')">Add pictures</button>';
   $('pad').innerHTML = h + '</div>';
 
   Array.prototype.forEach.call(document.querySelectorAll('.pic .img[data-i]'), function (el) {
@@ -614,7 +657,9 @@ function padShow() {
       call('deleteStep', c.folderId, Number(b.getAttribute('data-i'))).then(function (n) {
         busy('');
         padSop.steps = n.steps;
-        if (cur && cur.folderId === c.folderId) { cur.n = n.steps.length + held.length; saveState(); }
+        [cur].concat(paused).forEach(function (x) {
+          if (x && x.folderId === c.folderId) { x.n = n.steps.length + waiting(x.lid); saveState(); }
+        });
         padShow();
       }).catch(function (e) { busy(''); toast(e.message, true); });
     };
@@ -673,6 +718,7 @@ if (!KEY) {
   if (localStorage.getItem('micOn')) { autoMic = true; setMic(true); }
   db('all').then(function (items) {
     held = (items || []).sort(function (a, b) { return a.id < b.id ? -1 : 1; });
+    held.forEach(function (i) { if (!i.lid && cur) i.lid = cur.lid; sopOf(i); });   // from before v2.3
     paintTop();
   });
   // Leaving the app: keep the picture being marked, upload. Coming back: straight to the live camera of the
