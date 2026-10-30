@@ -26,7 +26,7 @@
   v2.5: notepad, in-progress SOP: swipe right = send to SOP Master (clicks at the send point), swipe left = Delete
   (asks first; folder goes to the Drive trash, deleteCapture). Camera "Next" is now "Save".
   v2.6: camera roll picks several pictures at once; each opens in turn to mark + talk, Save = next one,
-  Retake = skip it. Notepad: typing under a picture shows a Save button. After a camera roll picture, Save opens the camera roll again for the next one (X = camera).
+  Retake = skip it. Notepad lists every sent SOP from Drive (listSent): Sent / Done. Notepad: typing under a picture shows a Save button. After a camera roll picture, Save opens the camera roll again for the next one (X = camera).
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -653,6 +653,18 @@ function openPad() {
   $('pad').style.display = 'block';
   padList();
   if (held.length) flush();
+  loadSent();
+}
+
+/** Every sent SOP from Drive (not just the ones sent from this phone): Sent = waiting for sync, Done = made into an SOP. */
+function loadSent() {
+  call('listSent').then(function (list) {
+    var have = {};
+    list = list.map(function (c) { have[c.folderId] = 1; return { folderId: c.folderId, title: c.title, n: c.n, date: c.updated, status: c.status }; });
+    sent = sent.filter(function (x) { return !have[x.folderId] && !x.status; }).concat(list);
+    saveState();
+    padRefresh();
+  }).catch(function () {});
 }
 
 function pics(n) { return n + (n === 1 ? ' picture' : ' pictures'); }
@@ -697,8 +709,9 @@ function padList() {
   }
   if (sending) h += '<p class="empty" style="margin:4px 0 10px">Sending ' + sending + ' to SOP Master…</p>';
   if (sent.length) {
-    h += '<div class="sec">Sent to SOP Master · tap to add more</div>' + sent.map(function (s) {
-      return card("reopen('" + s.folderId + "')", "padOpen('" + s.folderId + "', false)", s.title, pics(s.n) + ' · sent ' + s.date, 'Sent', false);
+    h += '<div class="sec">Sent to SOP Master · Sent = tap to add more · Done = made into an SOP</div>' + sent.map(function (s) {
+      var done = s.status === 'DONE', view = "padOpen('" + s.folderId + "', false)";
+      return card(done ? view : "reopen('" + s.folderId + "')", view, s.title, pics(s.n) + ' · sent ' + s.date, done ? 'Done' : 'Sent', false);
     }).join('');
   }
   if (!going.length && !sent.length && !sending) h += '<p class="empty">No SOPs yet.<br>Go back to the camera, tap the mic, and start shooting.</p>';
