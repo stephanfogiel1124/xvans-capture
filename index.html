@@ -25,6 +25,8 @@
   v2.4: notepad, tap a picture = fix its red marks (undo, eraser, clear, draw more), saved in the background.
   v2.5: notepad, in-progress SOP: swipe right = send to SOP Master (clicks at the send point), swipe left = Delete
   (asks first; folder goes to the Drive trash, deleteCapture). Camera "Next" is now "Save".
+  v2.6: camera roll picks several pictures at once; each opens in turn to mark + talk, Save = next one,
+  Retake = skip it, then back to the camera.
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -188,7 +190,7 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 </div>
 <div class="busy" id="busy"></div>
 <div class="sheetbg" id="sheet" onclick="if(event.target===this)sheetClose()"><div class="sheet glass" id="sheetBody"></div></div>
-<input type="file" id="pick" accept="image/*" style="display:none">
+<input type="file" id="pick" accept="image/*" multiple style="display:none">
 
 <script>
 var API = 'https://script.google.com/macros/s/AKfycbzx-xtTjzXE5mAeYwAYDLOIwW3QskPkgpMX5gTYdbfWQ8K87nN_GLMnrhtfyGvdnWGJ/exec';
@@ -208,6 +210,7 @@ paused.forEach(function (s, i) { if (!s.lid) s.lid = 'p' + i; delete s.sending; 
 var queue = Promise.resolve();   // uploads run one after another
 var saving = 0;
 var shot = null;                 // {base canvas, strokes} while scribbling
+var roll = [], rollN = 0;        // camera roll pictures still to mark, and how many were picked
 var heard = '';                  // what was said for the picture we're on
 var thumbs = {};
 
@@ -256,6 +259,7 @@ function startCamera() {
   $('shootBar').style.display = 'flex';
   $('drawBar').style.display = 'none';
   shot = null;
+  roll = [];
   paintTop();
   if (stream) return;
   hint('');
@@ -280,13 +284,22 @@ function shoot() {
 
 function pickPhoto() { $('pick').click(); }
 $('pick').onchange = function () {
-  var f = this.files[0];
+  roll = Array.prototype.slice.call(this.files);
+  rollN = roll.length;
   this.value = '';
-  if (!f) return;
-  var url = URL.createObjectURL(f);
-  loadSrc(url).then(function (c) { URL.revokeObjectURL(url); scribble(c); })
-    .catch(function () { toast('Could not open that photo', true); });
+  nextShot();
 };
+
+/** After Save or Retake: the next picked camera roll picture to mark, else back to the camera. */
+function nextShot() {
+  if (!roll.length) return startCamera();
+  var f = roll.shift(), k = rollN - roll.length, url = URL.createObjectURL(f);
+  loadSrc(url).then(function (c) {
+    URL.revokeObjectURL(url);
+    scribble(c);
+    if (rollN > 1) hint('Camera roll ' + k + ' of ' + rollN);
+  }).catch(function () { URL.revokeObjectURL(url); toast('Could not open that photo', true); nextShot(); });
+}
 
 // ---------- Scribble ----------
 
@@ -303,7 +316,7 @@ function scribble(base) {
   redraw();
 }
 
-function retake() { startCamera(); }
+function retake() { nextShot(); }   // on a camera roll picture: skip it
 
 function undo() {
   if (!shot) return;
@@ -386,7 +399,7 @@ pen($('mcv'), function () { return marking; }, function () { redraw($('mcv'), ma
 function next() {
   if (!shot) return;
   keepShot();
-  startCamera();
+  nextShot();
 }
 
 /** Holds the picture being marked, with what was said for it. */
@@ -1013,7 +1026,7 @@ if (!KEY) {
       flush();
     } else {
       if ($('pad').style.display === 'block') { $('pad').style.display = 'none'; padSop = null; }
-      startCamera();
+      nextShot();   // picked camera roll pictures not marked yet come back first
       if (micWas) { autoMic = true; setMic(true); }
     }
   });
