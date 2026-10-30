@@ -22,6 +22,7 @@
   Notepad: tap an SOP = back to the camera adding pictures to it (no loading). Sent ones not synced yet
   reopen (reopenCapture). Other unfinished SOPs wait under "In progress". The pictures icon = view/edit.
   v2.3: each waiting picture knows its own SOP (lid), so switching SOPs or "New SOP" never waits for uploads.
+  v2.4: notepad, tap a picture = fix its red marks (undo, eraser, clear, draw more), saved in the background.
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -86,6 +87,12 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 .pic .del.sure{color:var(--red)}
 .padbtn{display:block;width:100%;text-align:center;margin:16px 0 0}
 .empty{color:var(--muted);text-align:center;margin:60px 20px}
+.pic .img.tap{cursor:pointer}
+.pic .pen{position:absolute;right:10px;top:10px;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.pic .pen svg{width:18px;height:18px}
+#mark{position:fixed;inset:0;z-index:8;background:#000;display:none}
+#mark canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;touch-action:none}
+.round.on{background:#fff;color:#000;border-color:#fff}
 .busy{position:fixed;inset:0;z-index:9;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;font-weight:600}
 </style>
 </head>
@@ -138,6 +145,30 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
 </div>
 
 <div id="pad"></div>
+
+<!-- fix the red marks on a saved picture -->
+<div id="mark">
+  <canvas id="mcv"></canvas>
+  <div class="topbar">
+    <button class="pill glass" onclick="markClose()">Cancel</button>
+    <div class="mid" id="markMid"></div>
+    <button class="pill white" onclick="markSave()">Save</button>
+  </div>
+  <div class="bottombar" style="justify-content:center;gap:14px">
+    <button class="round glass" onclick="markUndo()" aria-label="Undo mark">
+      <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>
+    </button>
+    <button class="round glass" id="eraseB" onclick="markErase()" aria-label="Eraser: tap a mark to remove it">
+      <svg viewBox="0 0 24 24"><path d="M8.5 19.5l-4-4a1.5 1.5 0 0 1 0-2.1l9-9a1.5 1.5 0 0 1 2.1 0l4 4a1.5 1.5 0 0 1 0 2.1L12 18.1"/><path d="M8.5 19.5H20M8 10l6 6"/></svg>
+    </button>
+    <button class="round glass" onclick="markClear()" aria-label="Clear all marks">
+      <svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg>
+    </button>
+    <button class="round glass on" id="drawB" onclick="markDraw()" aria-label="Red pen">
+      <svg viewBox="0 0 24 24"><path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19z"/><path d="M14.5 6.5l3 3"/></svg>
+    </button>
+  </div>
+</div>
 <div class="busy" id="busy"></div>
 <input type="file" id="pick" accept="image/*" style="display:none">
 
@@ -294,16 +325,35 @@ function photoPoint(cv, cx, cy) {
 /** Red pen on a canvas; getShot() returns the {base, strokes, cur} being drawn on. */
 function pen(cv, getShot, onDraw) {
   var down = false;
-  function start(cx, cy) { var s = getShot(); if (!s) return; down = true; s.cur = { w: PEN, pts: [photoPoint(cv, cx, cy)] }; onDraw(); }
+  function start(cx, cy) {
+    var s = getShot(); if (!s) return; down = true;
+    if (s.erase) return rub(s, cx, cy);
+    s.cur = { w: PEN, pts: [photoPoint(cv, cx, cy)] }; onDraw();
+  }
+  /** Eraser: removes any mark the finger passes over. */
+  function rub(s, cx, cy) {
+    var p = photoPoint(cv, cx, cy), W = cv.width, H = cv.height, r = 0.035 * Math.max(W, H), n = s.strokes.length;
+    var x = p[0] * W, y = p[1] * H;
+    function near(a, b) {   // finger within r of the line a-b (pixels)
+      var ax = a[0] * W, ay = a[1] * H, dx = b[0] * W - ax, dy = b[1] * H - ay, L = dx * dx + dy * dy;
+      var t = L ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L)) : 0;
+      return Math.hypot(ax + t * dx - x, ay + t * dy - y) < r;
+    }
+    s.strokes = s.strokes.filter(function (st) {
+      return !st.pts.some(function (q, k) { return near(q, st.pts[k + 1] || q); });
+    });
+    if (s.strokes.length !== n) onDraw();
+  }
   function move(cx, cy) {
     var s = getShot();
     if (!down || !s) return;
+    if (s.erase) return rub(s, cx, cy);
     var p = photoPoint(cv, cx, cy), last = s.cur.pts[s.cur.pts.length - 1];
     if (Math.abs(p[0] - last[0]) + Math.abs(p[1] - last[1]) < 0.003) return;
     s.cur.pts.push(p);
     onDraw();
   }
-  function end() { var s = getShot(); if (!down || !s) return; down = false; s.strokes.push(s.cur); s.cur = null; onDraw(); }
+  function end() { var s = getShot(); if (!down || !s) return; down = false; if (!s.cur) return; s.strokes.push(s.cur); s.cur = null; onDraw(); }
   cv.addEventListener('touchstart', function (e) { e.preventDefault(); start(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
   cv.addEventListener('touchmove', function (e) { e.preventDefault(); move(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
   cv.addEventListener('touchend', function (e) { e.preventDefault(); end(); }, { passive: false });
@@ -312,6 +362,7 @@ function pen(cv, getShot, onDraw) {
   window.addEventListener('mouseup', end);
 }
 pen($('cv'), function () { return shot; }, function () { redraw(); });
+pen($('mcv'), function () { return marking; }, function () { redraw($('mcv'), marking); });
 
 /** Next: saves this picture with what was said for it, back to the camera for the next one. */
 function next() {
@@ -621,8 +672,12 @@ function padShow() {
   var h = '<div class="padhead"><button class="round glass" onclick="padList()" aria-label="Back">' +
     '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button><h1>' + esc(c.title) + '</h1><span style="width:52px"></span></div><div class="padbody">';
   c.steps.forEach(function (s, i) {
-    h += '<div class="pic"><div class="img" data-i="' + i + '"' + (s.photoId && thumbs[s.photoId] ? ' style="background-image:url(' + thumbs[s.photoId] + ')"' : '') + '>' +
-      '<span class="num glass">' + (i + 1) + '</span>' + (s.photoId ? (thumbs[s.photoId] ? '' : 'loading…') : 'no picture') + '</div>' +
+    var tap = c.editable && s.photoId;
+    h += '<div class="pic"><div class="img' + (tap ? ' tap' : '') + '" data-i="' + i + '"' + (tap ? ' onclick="markOpen(' + i + ')"' : '') +
+      (s.photoId && thumbs[s.photoId] ? ' style="background-image:url(' + thumbs[s.photoId] + ')"' : '') + '>' +
+      '<span class="num glass">' + (i + 1) + '</span>' +
+      (tap ? '<span class="pen glass"><svg viewBox="0 0 24 24"><path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19z"/></svg></span>' : '') +
+      (s.photoId ? (thumbs[s.photoId] ? '' : 'loading…') : 'no picture') + '</div>' +
       '<div class="row"><textarea data-i="' + i + '"' + (c.editable ? '' : ' readonly') + ' placeholder="Nothing said">' + esc(s.caption) + '</textarea>' +
       (c.editable ? '<button class="del" data-i="' + i + '" aria-label="Delete"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></svg></button>' : '') +
       '</div></div>';
@@ -664,6 +719,59 @@ function padShow() {
       }).catch(function (e) { busy(''); toast(e.message, true); });
     };
   });
+}
+
+// ---------- Fix the red marks on a saved picture: unmarked original + its marks, redrawn ----------
+
+var marking = null;   // {base, strokes, cur, erase, i, folderId}
+
+function markOpen(i) {
+  var c = padSop, s = c.steps[i];
+  busy('Loading picture…');
+  call('getStepPhoto', c.folderId, i, 'original').then(loadSrc).then(function (base) {
+    busy('');
+    marking = { base: base, strokes: JSON.parse(JSON.stringify(s.strokes || [])), cur: null, erase: false, i: i, folderId: c.folderId };
+    var cv = $('mcv');
+    cv.width = base.width;
+    cv.height = base.height;
+    $('markMid').textContent = 'Picture ' + (i + 1);
+    $('mark').style.display = 'block';
+    markDraw();
+  }).catch(function (e) { busy(''); toast('Could not open picture: ' + e.message, true); });
+}
+
+function markClose() { $('mark').style.display = 'none'; marking = null; }
+function markUndo() { if (marking) { marking.strokes.pop(); redraw($('mcv'), marking); } }
+function markClear() { if (marking) { marking.strokes = []; redraw($('mcv'), marking); } }
+function markTool(erase) {
+  marking.erase = erase;
+  $('eraseB').classList.toggle('on', erase);
+  $('drawB').classList.toggle('on', !erase);
+  redraw($('mcv'), marking);
+}
+function markErase() { markTool(true); }
+function markDraw() { markTool(false); }
+
+/** Shows the new marks right away; the upload runs in the background. */
+function markSave() {
+  var m = marking, cv = $('mcv');
+  redraw(cv, m);
+  var f = { photo: cv.toDataURL('image/jpeg', 0.85), strokes: m.strokes };
+  if (m.strokes.length) f.original = m.base.toDataURL('image/jpeg', 0.85);
+  else f.photo = m.base.toDataURL('image/jpeg', 0.85);
+  var thumb = (function () { var t = document.createElement('canvas'), k = 800 / Math.max(cv.width, cv.height); t.width = Math.round(cv.width * k); t.height = Math.round(cv.height * k); t.getContext('2d').drawImage(cv, 0, 0, t.width, t.height); return t.toDataURL('image/jpeg', 0.8); })();
+  markClose();
+  var el = document.querySelector('.pic .img[data-i="' + m.i + '"]');
+  if (el) el.style.backgroundImage = 'url(' + thumb + ')';
+  toast('Saving marks…');
+  queue = queue.then(function () {
+    return call('updateStep', m.folderId, m.i, f);
+  }).then(function (n) {
+    var s = n.steps[m.i];
+    if (s && s.photoId) thumbs[s.photoId] = thumb;
+    if (padSop && padSop.folderId === m.folderId) padSop.steps = n.steps;
+    toast('Marks saved ✓');
+  }).catch(function (e) { toast('Marks not saved: ' + e.message, true); });
 }
 
 // ---------- Image helpers ----------
