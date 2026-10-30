@@ -14,9 +14,9 @@
   Opens on the camera. Mic button starts muted; tap = listen (Safari speech recognition) until tapped again.
   Shoot -> scribble red -> Next. Pictures are numbered 1..n; what he says goes to the picture he's on.
   Pictures wait on the phone (IndexedDB) while he shoots; they upload when he mutes the mic, opens the
-  notepad, taps Done, or leaves the app. Never in the background while shooting.
+  notepad, or leaves the app. Never in the background while shooting.
   No name or category: he says them, SOP Master pulls them from the transcript at sync.
-  Top left = notepad (his SOPs, pictures + text, edit). Done = Status NEW, hands off to SOP Master.
+  Top left = notepad (his SOPs, pictures + text, edit). Swipe right there = Status NEW, hands off to SOP Master.
   v2.1: coming back to the app (unlock / switch back) always lands on the live camera of the SOP he was
   on, mic back on if it was on. A picture he was still marking when he left is kept as-is.
   Notepad: tap an SOP = back to the camera adding pictures to it (no loading). Sent ones not synced yet
@@ -27,6 +27,7 @@
   (asks first; folder goes to the Drive trash, deleteCapture). Camera "Next" is now "Save".
   v2.6: camera roll picks several pictures at once; each opens in turn to mark + talk, Save = next one,
   Retake = skip it. Notepad lists every sent SOP from Drive (listSent): Sent / Done. Notepad: typing under a picture shows a Save button. After a camera roll picture, Save opens the camera roll again for the next one (X = camera).
+  v2.7: no Done button on the camera. The only way to send is swipe right in the notepad.
   Saves through the SOP Master App (Apps Script doPost) into a CAPTURE folder in SOP Inbox.
   Private key comes in the link (?k=...) and is kept in localStorage. Nothing secret lives in this file.
 -->
@@ -131,7 +132,7 @@ svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.6;stroke
       <svg viewBox="0 0 24 24"><path d="M7 4h10a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>
     </button>
     <div class="mid" id="mid"></div>
-    <button class="pill glass" id="doneB" onclick="done()" style="visibility:hidden">Done</button>
+    <span style="width:52px"></span>
   </div>
 
   <div id="transcript" class="glass"></div>
@@ -425,7 +426,7 @@ function keepShot() {
   paintTranscript();
 }
 
-/** Keeps a picture on the phone until the next upload (mute, notepad, Done, leaving the app). */
+/** Keeps a picture on the phone until the next upload (mute, notepad, leaving the app). */
 function hold(f) {
   if (!cur) cur = { lid: newId(), folderId: '', n: 0, started: stamp() };
   cur.n++;
@@ -492,24 +493,14 @@ function flush() {
   return queue;
 }
 
-/** Done: anything said after the last picture becomes a last note, then hand off to SOP Master. */
-function done() {
-  if (!cur) return;
-  flushInterim();
-  if (heard.trim()) { hold({ kind: 'step', caption: heard.trim() }); heard = ''; }
-  setMic(false, true);
-  busy('Sending to SOP Master…');
-  sendSop(cur).then(function () {
-    busy('');
-    paintTranscript();
-    toast('Sent ✓  Tell SOP Master: sync');
-  }, function (e) { busy(''); toast('Not sent: ' + e.message, true); });
-}
-
 /** Hands one SOP to SOP Master (Status NEW) after its waiting pictures upload. If it was the current one,
  *  the next picture starts a new SOP; if sending fails it goes back where it was. */
 function sendSop(s) {
   var wasCur = s === cur;
+  if (wasCur) {   // anything said after the last picture becomes a last note
+    flushInterim();
+    if (heard.trim()) { hold({ kind: 'step', caption: heard.trim() }); heard = ''; paintTranscript(); }
+  }
   if (wasCur) { paused.unshift(cur); cur = null; }
   s.sending = true;
   saveState(); paintTop(); padRefresh();
@@ -551,7 +542,6 @@ function paintTop() {
   var n = (cur ? cur.n : 0) + 1;
   $('mid').innerHTML = (cur ? 'SOP ' + esc(cur.started.slice(11)) + ' · ' : 'New SOP · ') + 'Picture <b class="count">' + n + '</b>' +
     (saving ? ' · saving ' + saving : held.length ? ' · ' + held.length + ' waiting' : '');
-  $('doneB').style.visibility = cur ? 'visible' : 'hidden';
 }
 
 // ---------- Mic: Safari speech recognition, restarted whenever it stops, until muted ----------
